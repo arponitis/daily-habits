@@ -2,8 +2,18 @@
 
 A simple, private daily habit tracker. Check in once a day, watch the streaks grow.
 
+**Live app:** https://arponitis.github.io/daily-habits/
+
 No accounts, no servers, no tracking — everything is stored in your browser's
 localStorage on the device you use it on.
+
+## Install on iPhone
+
+1. Open the live app URL in Safari.
+2. Tap **Share → Add to Home Screen**.
+3. It launches full-screen like a native app (PWA manifest + touch icons included).
+
+Your check-ins stay on the device — each browser keeps its own data.
 
 ## Features
 
@@ -25,13 +35,11 @@ python3 -m http.server 8000
 
 ## Deploy
 
-This is a static site — it deploys anywhere:
+Live via **GitHub Pages**: repo Settings → Pages → Deploy from a branch →
+`main` / root. No build step.
 
-- **GitHub Pages:** repo Settings → Pages → Deploy from a branch → `main` / root
-- **Netlify / Vercel / Cloudflare Pages:** point at this repo, no build step
-
-On iPhone: open the deployed URL in Safari → Share → **Add to Home Screen**.
-It launches full-screen like a native app (manifest + apple-touch-icon included).
+Any static host works too — Netlify, Vercel, or Cloudflare Pages pointed at
+this repo.
 
 ## Project structure
 
