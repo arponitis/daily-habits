@@ -7,11 +7,13 @@ A simple, private daily habit tracker. Check in once a day, watch the streaks gr
 No accounts, no servers, no tracking — everything is stored in your browser's
 localStorage on the device you use it on.
 
-## Install on iPhone
+## Install on your phone
 
-1. Open the live app URL in Safari.
-2. Tap **Share → Add to Home Screen**.
-3. It launches full-screen like a native app (PWA manifest + touch icons included).
+**iPhone (Safari):** open the live app URL → Share → **Add to Home Screen**.
+Launches full-screen like a native app.
+
+**Android (Chrome):** open the live app URL → menu → **Add to Home screen**
+(Chrome may offer "Install app" directly). Same full-screen app feel.
 
 Your check-ins stay on the device — each browser keeps its own data.
 
