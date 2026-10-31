@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Daily Habits — a simple, private habit tracker</title>
+  <meta name="description" content="Daily Habits is a free, offline-first habit tracker. Check in once a day, build streaks, keep your data on your device.">
+  <meta property="og:title" content="Daily Habits">
+  <meta property="og:description" content="A simple, private daily habit tracker. Check in once a day, watch the streaks grow.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#4f46e5">
+  <style>
+    :root { --bg:#f5f6fa; --card:#fff; --ink:#1a1d26; --muted:#6b7280; --line:#e7e9f0; --accent:#4f46e5; --accent-soft:#eef0fe; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0e1320; --card:#172033; --ink:#edf1f7; --muted:#8d99b0; --line:#26314a; --accent:#7c93ff; --accent-soft:#22315c; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+    .wrap { max-width:640px; margin:0 auto; padding:56px 20px 64px; }
+    .hero { text-align:center; padding:32px 0 8px; }
+    .hero .ico { font-size:56px; }
+    h1 { font-size:34px; margin:14px 0 8px; letter-spacing:-.02em; }
+    .tag { font-size:17px; color:var(--muted); margin:0 0 26px; }
+    .cta { display:inline-block; background:var(--accent); color:#fff; font-weight:700; font-size:17px;
+           padding:14px 34px; border-radius:14px; text-decoration:none; }
+    .cta:active { transform:scale(.97); }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:40px 0; }
+    @media (max-width:480px){ .grid{ grid-template-columns:1fr; } }
+    .feat { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; }
+    .feat .f-ico { font-size:24px; }
+    .feat b { display:block; margin:8px 0 4px; font-size:15px; }
+    .feat p { margin:0; font-size:13.5px; color:var(--muted); }
+    h2 { font-size:21px; margin:36px 0 12px; }
+    .install { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; margin-bottom:12px; }
+    .install b { font-size:15.5px; }
+    .install ol { margin:10px 0 0; padding-left:20px; color:var(--muted); font-size:14.5px; display:grid; gap:6px; }
+    footer { margin-top:48px; text-align:center; color:var(--muted); font-size:13.5px; }
+    footer a { color:var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="ico">🌱</div>
+      <h1>Daily Habits</h1>
+      <p class="tag">A simple, private habit tracker.<br>Check in once a day, watch the streaks grow.</p>
+      <a class="cta" href="./">Launch the app</a>
+    </div>
+
+    <div class="grid">
+      <div class="feat"><div class="f-ico">🔥</div><b>Streaks that motivate</b><p>Current, best, and total streaks for every habit — schedule-aware, so rest days never break them.</p></div>
+      <div class="feat"><div class="f-ico">🗓️</div><b>Flexible schedules</b><p>Daily, specific weekdays, or N times per week. Your routine, your rules.</p></div>
+      <div class="feat"><div class="f-ico">📊</div><b>Stats &amp; insights</b><p>Weekly targets, completion trends, your best weekday, and most consistent habit.</p></div>
+      <div class="feat"><div class="f-ico">⏰</div><b>Daily reminders</b><p>A gentle nudge at your chosen time so no day slips by.</p></div>
+      <div class="feat"><div class="f-ico">📡</div><b>Works offline</b><p>Install it and it runs with no network. Your data lives on your device.</p></div>
+      <div class="feat"><div class="f-ico">🔒</div><b>Private by design</b><p>No account, no tracking, no cloud. Export or delete everything anytime.</p></div>
+    </div>
+
+    <h2>Install it like an app</h2>
+    <div class="install">
+      <b>🍎 iPhone (Safari)</b>
+      <ol>
+        <li>Open the app and tap the <b>Share</b> button.</li>
+        <li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+      </ol>
+    </div>
+    <div class="install">
+      <b>🤖 Android (Chrome)</b>
+      <ol>
+        <li>Open the app and tap the <b>⋮</b> menu.</li>
+        <li>Choose <b>Add to Home screen</b> or <b>Install app</b>.</li>
+      </ol>
+    </div>
+
+    <footer>
+      Free and open source. Your data never leaves your device.<br>
+      <a href="https://github.com/arponitis/daily-habits">GitHub</a>
+    </footer>
+  </div>
+</body>
+</html>
