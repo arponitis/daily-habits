@@ -20,8 +20,11 @@ Your check-ins stay on the device — each browser keeps its own data.
 ## Features
 
 - One-tap daily check-ins with a progress ring
-- Current / best / total streaks per habit
-- Last-7-days strip and a month calendar with backfill (fix past days)
+- Flexible schedules: daily, specific weekdays, or N times per week (rest days never break streaks)
+- Current / best / total streaks per habit (schedule-aware)
+- Weekly targets and a Stats tab with per-habit weekly completion
+- Last-7-days strip and a month calendar with backfill, streak highlights, and month summaries
+- Habit descriptions and categories with filtering
 - Per-day notes (e.g. what chapter you read)
 - Add, rename, archive, and delete habits
 - Export / import your data as JSON
@@ -45,6 +48,13 @@ npm test
 ```
 
 The suite runs with `TZ=America/New_York` so DST boundary cases are exercised.
+
+## Schedules
+
+Each habit has a schedule: `daily`, specific `weekdays`, or `timesPerWeek`.
+Streaks are schedule-aware — a Mon–Fri habit keeps its streak across the
+weekend, and a 3×/week habit streaks on consecutive quota-meeting weeks.
+Stored data is versioned (`v: 2`) and migrated forward on load.
 
 ## Deploy
 
