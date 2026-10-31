@@ -1,13 +1,14 @@
 /* Daily Habits service worker — offline app-shell cache.
    First visit caches the shell; afterwards the app loads with no network. */
 
-var CACHE = 'daily-habits-v3';
+var CACHE = 'daily-habits-v5';
 var ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './lib.js',
+  './db.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
@@ -47,6 +48,37 @@ self.addEventListener('fetch', function (e) {
       }).catch(function () {
         return caches.match('./index.html');
       });
+    })
+  );
+});
+
+/* Web Push reminders (Phase A #46): show the notification; tapping it
+   opens the app. The payload is intentionally generic - no habit data
+   ever passes through the push server. */
+self.addEventListener('push', function (e) {
+  var data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (err) {}
+  var title = data.title || 'Daily Habits';
+  var body = data.body || 'Time for your check-in';
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body: body,
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      data: { url: './' }
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (wins) {
+      for (var i = 0; i < wins.length; i++) {
+        if ('focus' in wins[i]) { wins[i].focus(); return; }
+      }
+      if (clients.openWindow) return clients.openWindow(url);
     })
   );
 });
