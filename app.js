@@ -83,7 +83,7 @@ function scheduleLabel(h) { return DH.scheduleLabel(h.schedule); }
 var viewDate  = todayKey();          // YYYY-MM-DD shown in check-in tab
 var viewMonth = viewDate.slice(0, 7); // YYYY-MM shown in calendar tab
 var activeTab = 'checkin';
-var openCard  = null;                // habit id expanded in check-in tab
+var sheetHabit = null;               // habit id open in the bottom sheet
 var newIcon   = EMOJI_CHOICES[3];    // default icon for the add-habit form
 var newScheduleType = 'daily';       // add-habit form: daily | weekdays | timesPerWeek
 var newWeekdays = [1, 2, 3, 4, 5];   // add-habit form weekday selection
@@ -333,6 +333,122 @@ function wipeData() {
   render();
 }
 
+/* ---------------- reminders ---------------- */
+
+var REM_KEY = 'daily-habits/v1.reminder';
+
+function getReminder() {
+  try {
+    var r = JSON.parse(localStorage.getItem(REM_KEY));
+    if (r && typeof r === 'object') return { time: r.time || '', lastFired: r.lastFired || '' };
+  } catch (e) {}
+  return { time: '', lastFired: '' };
+}
+
+function setReminder(r) {
+  try { localStorage.setItem(REM_KEY, JSON.stringify(r)); } catch (e) {}
+}
+
+function saveReminderTime() {
+  var el = document.getElementById('reminderTime');
+  var r = getReminder();
+  r.time = el ? el.value : '';
+  setReminder(r);
+  render();
+  if (r.time) showToast('⏰ Reminder set for ' + r.time);
+}
+
+function enableNotifications(cb) {
+  if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
+  if (Notification.permission === 'granted') { if (cb) cb(); return; }
+  Notification.requestPermission().then(function (p) {
+    if (p === 'granted') { if (cb) cb(); render(); }
+    else alert('Notifications are blocked — enable them in your browser settings to get reminders.');
+  });
+}
+
+function testReminder() {
+  enableNotifications(function () { fireReminder(true); });
+}
+
+function fireReminder(isTest) {
+  var key = todayKey();
+  var remaining = activeHabits().filter(function (h) { return isScheduledOn(h, key) && !isDone(key, h.id); });
+  var n = remaining.length;
+  var body = isTest ? 'Reminders are working — you will be nudged at your set time.'
+    : (n ? n + ' habit' + (n === 1 ? '' : 's') + ' left today — keep the streak alive!'
+         : 'All done for today. Nice work!');
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('Daily Habits ⏰', { body: body }); } catch (e) { /* ignore */ }
+  }
+  showToast('⏰ ' + body);
+}
+
+function checkReminder() {
+  var r = getReminder();
+  if (!r.time) return;
+  var now = new Date();
+  var hm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  var today = todayKey();
+  if (hm >= r.time && r.lastFired !== today) {
+    r.lastFired = today;
+    setReminder(r);
+    fireReminder(false);
+  }
+}
+
+/* ---------------- theme ---------------- */
+
+var THEME_KEY = 'daily-habits/theme';
+
+function applyTheme() {
+  var t = 'auto';
+  try { t = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) {}
+  var dark = t === 'dark' ||
+    (t === 'auto' && typeof window.matchMedia === 'function' &&
+     window.matchMedia('(prefers-color-scheme: dark)').matches);
+  try { document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light'); } catch (e) {}
+}
+
+function setTheme(t) {
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  applyTheme();
+  render();
+}
+
+/* ---------------- onboarding ---------------- */
+
+var ONBOARD_KEY = 'daily-habits/onboarded';
+
+function isOnboarded() {
+  try { return !!localStorage.getItem(ONBOARD_KEY); } catch (e) { return true; }
+}
+
+function dismissWelcome() {
+  try { localStorage.setItem(ONBOARD_KEY, '1'); } catch (e) {}
+  render();
+}
+
+function welcomeGo() {
+  dismissWelcome();
+  switchTab('more');
+  setTimeout(function () {
+    var el = document.getElementById('newHabitName');
+    if (el) el.focus();
+  }, 60);
+}
+
+function welcomeHtml() {
+  return '<div class="card welcome"><div class="w-ico">🌱</div>' +
+    '<h2>Welcome to Daily Habits</h2>' +
+    '<p class="hint">The whole system in three steps:</p>' +
+    '<div class="w-steps"><div><b>1.</b> Add a small habit</div>' +
+    '<div><b>2.</b> Check in once a day</div>' +
+    '<div><b>3.</b> Watch the streak grow</div></div>' +
+    '<div class="btn-row"><button type="button" class="btn" onclick="welcomeGo()">Add your first habit</button>' +
+    '<button type="button" class="btn ghost" onclick="dismissWelcome()">Got it</button></div></div>';
+}
+
 /* ---------------- rendering ---------------- */
 
 function esc(s) {
@@ -377,40 +493,68 @@ function weekStrip(key, hid) {
 
 function habitCard(h, key) {
   var done = isDone(key, h.id);
-  var e = dayEntry(key, h.id);
-  var open = openCard === h.id;
-  var note = e && e.note ? e.note : '';
   var scheduled = isScheduledOn(h, key);
   var streakUnit = DH.normSchedule(h).type === 'timesPerWeek' ? 'wk' : 'day';
   var sub = scheduled
     ? '🔥 ' + currentStreak(h.id) + '-' + streakUnit + ' streak · ' + esc(scheduleLabel(h))
     : 'Rest day · ' + esc(scheduleLabel(h));
   if (h.category) sub += ' · ' + esc(h.category);
-  var wp = DH.weekProgress(state.days, h, DH.isoWeekKey(key));
-  var html = '<div class="habit' + (done ? ' done' : '') + (scheduled ? '' : ' rest') + '">' +
-    '<div class="habit-row" onclick="toggleCard(\'' + h.id + '\')">' +
+  return '<div class="habit' + (done ? ' done' : '') + (scheduled ? '' : ' rest') + '">' +
+    '<div class="habit-row" onclick="openSheet(\'' + h.id + '\')">' +
       '<div class="habit-ico">' + esc(h.icon) + '</div>' +
       '<div class="habit-meta"><div class="habit-name">' + esc(h.name) + '</div>' +
       '<div class="habit-sub">' + sub + '</div></div>' +
       '<button type="button" class="check' + (done ? ' on' : '') + '" ' +
         'onclick="event.stopPropagation();toggleDone(\'' + h.id + '\')" aria-label="Toggle ' + esc(h.name) + '">✓</button>' +
-    '</div>';
-  if (open) {
-    html += '<div class="habit-detail">' +
-      '<div class="stats">' +
-        '<div class="stat"><b>' + currentStreak(h.id) + '</b><span>Current</span></div>' +
-        '<div class="stat"><b>' + bestStreak(h.id) + '</b><span>Best</span></div>' +
-        '<div class="stat"><b>' + totalDone(h.id) + '</b><span>Total</span></div>' +
-      '</div>' +
-      '<div class="sched-line">' + esc(scheduleLabel(h)) +
-        (h.description ? ' · ' + esc(h.description) : '') +
-        ' · This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
-      weekStrip(key, h.id) +
+    '</div></div>';
+}
+
+/* ---------------- bottom sheet ---------------- */
+
+function openSheet(hid) { sheetHabit = hid; render(); }
+function closeSheet() { sheetHabit = null; render(); }
+
+var sheetTouchY = null;
+function sheetTouchStart(e) { sheetTouchY = e.touches[0].clientY; }
+function sheetTouchEnd(e) {
+  if (sheetTouchY == null) return;
+  var dy = e.changedTouches[0].clientY - sheetTouchY;
+  sheetTouchY = null;
+  if (dy > 90) closeSheet();
+}
+
+function fmtShort(key) {
+  return parseKey(key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function sheetHtml(h, key) {
+  var done = isDone(key, h.id);
+  var e = dayEntry(key, h.id);
+  var note = e && e.note ? e.note : '';
+  var wp = DH.weekProgress(state.days, h, DH.isoWeekKey(key));
+  var streakUnit = DH.normSchedule(h).type === 'timesPerWeek' ? 'wk' : 'day';
+  return '<div class="sheet-backdrop" onclick="closeSheet()"></div>' +
+  '<div class="sheet" role="dialog" aria-label="' + esc(h.name) + '"' +
+    ' ontouchstart="sheetTouchStart(event)" ontouchend="sheetTouchEnd(event)">' +
+    '<div class="sheet-grab"></div>' +
+    '<div class="sheet-head"><div class="habit-ico">' + esc(h.icon) + '</div>' +
+      '<div class="habit-meta"><div class="habit-name">' + esc(h.name) + '</div>' +
+      '<div class="habit-sub">🔥 ' + currentStreak(h.id) + '-' + streakUnit + ' streak · ' + esc(scheduleLabel(h)) + '</div></div>' +
+      '<button type="button" class="navbtn" onclick="closeSheet()" aria-label="Close">✕</button></div>' +
+    (h.description ? '<p class="hint">' + esc(h.description) + '</p>' : '') +
+    '<div class="stats">' +
+      '<div class="stat"><b>' + currentStreak(h.id) + '</b><span>Current</span></div>' +
+      '<div class="stat"><b>' + bestStreak(h.id) + '</b><span>Best</span></div>' +
+      '<div class="stat"><b>' + totalDone(h.id) + '</b><span>Total</span></div>' +
+    '</div>' +
+    '<div class="sched-line">This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
+    weekStrip(key, h.id) +
+    '<div class="field"><label>Note for ' + esc(fmtLong(key)) + '</label>' +
       '<textarea class="note" placeholder="Add a note for this day…" ' +
-        'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea>' +
-    '</div>';
-  }
-  return html + '</div>';
+      'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea></div>' +
+    '<button type="button" class="btn sheet-cta" onclick="toggleDone(\'' + h.id + '\');closeSheet();">' +
+      (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
+  '</div>';
 }
 
 function setCat(c) { activeCat = c; render(); }
@@ -427,6 +571,8 @@ function renderCheckin() {
     '</div>' +
     '<button type="button" class="navbtn" onclick="moveDay(1)" ' + (isToday ? 'disabled' : '') + ' aria-label="Next day">›</button>' +
   '</div>';
+
+  if (!isOnboarded()) html += welcomeHtml();
 
   // category filter chips
   var cats = [];
@@ -492,6 +638,7 @@ function renderStats() {
     html += '<div class="card stats-top"><div><h2>This week</h2>' +
       '<p class="hint">' + tDone + ' of ' + tTotal + ' scheduled check-ins</p></div>' +
       '<div class="ring-wrap">' + ring(tTotal ? tDone / tTotal : 0, tDone + '/' + tTotal) + '</div></div>';
+    html += insightsHtml(DH.insights(state.days, habits, today));
     rows.forEach(function (r) {
       var pct = r.wp.target ? Math.round(100 * Math.min(r.wp.done, r.wp.target) / r.wp.target) : 0;
       html += '<div class="card"><div class="srow-head"><span>' + esc(r.h.icon) + ' <b>' + esc(r.h.name) + '</b></span>' +
@@ -505,6 +652,40 @@ function renderStats() {
     });
   }
   document.getElementById('view').innerHTML = html;
+}
+
+var DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function insightsHtml(ins) {
+  var items = [];
+  if (ins.longestActiveStreak) {
+    var s = ins.longestActiveStreak;
+    items.push('<div class="insight"><span class="i-ico">🔥</span><div>Longest active streak: <b>' +
+      esc(s.icon) + ' ' + esc(s.name) + '</b> at <b>' + s.n + '</b></div></div>');
+  }
+  if (ins.mostConsistent) {
+    var m = ins.mostConsistent;
+    items.push('<div class="insight"><span class="i-ico">🏆</span><div>Most consistent: <b>' +
+      esc(m.icon) + ' ' + esc(m.name) + '</b> — ' + m.done + '/' + m.scheduled +
+      ' (' + Math.round(100 * m.rate) + '%) over the last 4 weeks</div></div>');
+  }
+  if (ins.bestWeekday) {
+    items.push('<div class="insight"><span class="i-ico">📅</span><div>Your best day is <b>' +
+      DOW_NAMES[ins.bestWeekday.dow] + '</b> — ' + Math.round(100 * ins.bestWeekday.rate) +
+      '% completion</div></div>');
+  }
+  if (ins.thisWeek.total || ins.lastWeek.total) {
+    var arrow = ins.thisWeek.done > ins.lastWeek.done ? '📈'
+      : (ins.thisWeek.done < ins.lastWeek.done ? '📉' : '➡️');
+    items.push('<div class="insight"><span class="i-ico">' + arrow + '</span><div>This week <b>' +
+      ins.thisWeek.done + '/' + ins.thisWeek.total + '</b> vs last week <b>' +
+      ins.lastWeek.done + '/' + ins.lastWeek.total + '</b></div></div>');
+  }
+  if (!items.length) {
+    return '<div class="card"><h2>Insights</h2>' +
+      '<p class="hint">Check in for a few days and insights will appear here.</p></div>';
+  }
+  return '<div class="card"><h2>Insights</h2>' + items.join('') + '</div>';
 }
 
 function monthSummary(y, m, habits, today) {
@@ -628,13 +809,30 @@ function renderMore() {
   }
   html += '</div>';
 
+  var curTheme = 'auto';
+  try { curTheme = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) {}
+  html += '<div class="card"><h2>Appearance</h2><div class="seg">' +
+    ['auto', 'light', 'dark'].map(function (t) {
+      return '<button type="button" class="seg-btn' + (curTheme === t ? ' sel' : '') +
+             '" onclick="setTheme(\'' + t + '\')">' + t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
+    }).join('') + '</div></div>';
+
+  var rem = getReminder();
+  var notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
+  html += '<div class="card"><h2>Reminder</h2><p class="hint">A daily nudge while the app is open.</p>' +
+    '<div class="field"><label for="reminderTime">Remind me at</label>' +
+    '<input id="reminderTime" type="time" class="text-in" value="' + esc(rem.time) + '" onchange="saveReminderTime()"></div>' +
+    '<div class="btn-row"><button type="button" class="btn ghost" onclick="enableNotifications()">Enable notifications</button>' +
+    '<button type="button" class="btn ghost" onclick="testReminder()">Send test</button></div>' +
+    '<p class="hint">Status: ' + esc(notifState) + (rem.time ? ' · set for ' + esc(rem.time) : ' · no time set') + '</p></div>';
+
   html += '<div class="card"><h2>Data</h2><p class="hint">Your data never leaves this device unless you export it.</p>' +
     '<div class="btn-row"><button type="button" class="btn ghost" onclick="exportData()">Export</button>' +
     '<button type="button" class="btn ghost" onclick="triggerImport()">Import</button></div>' +
     '<div style="height:10px"></div>' +
     '<button type="button" class="btn danger" onclick="wipeData()">Delete all data</button></div>';
 
-  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.2 — check in once a day, watch the streaks grow. ' +
+  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.3 — check in once a day, watch the streaks grow. ' +
     'Add to your home screen for the full app feel.</p></div>';
 
   document.getElementById('view').innerHTML = html;
@@ -650,12 +848,15 @@ function render() {
   else if (activeTab === 'calendar') renderCalendar();
   else if (activeTab === 'stats') renderStats();
   else renderMore();
+  if (sheetHabit) {
+    var sh = habitById(sheetHabit);
+    if (sh) document.getElementById('view').innerHTML += sheetHtml(sh, viewDate);
+    else sheetHabit = null;
+  }
   window.scrollTo(0, 0);
 }
 
 /* ---------------- UI actions (called from inline handlers) ---------------- */
-
-function toggleCard(hid) { openCard = (openCard === hid) ? null : hid; render(); }
 
 /* ---------------- undo ---------------- */
 
@@ -691,14 +892,29 @@ function habitName(hid) {
   return h ? h.name : 'Habit';
 }
 
+function allScheduledDoneToday() {
+  var key = todayKey();
+  var sched = activeHabits().filter(function (h) { return isScheduledOn(h, key); });
+  return sched.length > 0 && sched.every(function (h) { return isDone(key, h.id); });
+}
+
 function toggleDone(hid) {
   var key = viewDate;
   var prev = isDone(key, hid);
   setDone(key, hid, !prev);
   undoStack.push({ key: key, hid: hid, prev: prev });
   if (undoStack.length > 20) undoStack.shift();
-  showToast((prev ? 'Unchecked ' : 'Checked ') + habitName(hid), 'Undo', undoLast);
   render();
+  if (!prev && allScheduledDoneToday()) {
+    var celebrated = null;
+    try { celebrated = localStorage.getItem('daily-habits/celebrated'); } catch (e) {}
+    if (celebrated !== key) {
+      try { localStorage.setItem('daily-habits/celebrated', key); } catch (e) {}
+      showToast('🎉 All done for today — streaks secured!', 'Undo', undoLast);
+      return;
+    }
+  }
+  showToast((prev ? 'Unchecked ' : 'Checked ') + habitName(hid), 'Undo', undoLast);
 }
 
 function undoLast() {
@@ -732,13 +948,26 @@ function moveMonth(n) {
 function pickDay(k) {
   if (k > todayKey()) return;
   viewDate = k;
-  openCard = null;
+  sheetHabit = null;
   render();
 }
 
-function switchTab(tab) { activeTab = tab; render(); }
+function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); }
 
 /* ---------------- boot ---------------- */
+
+applyTheme();
+if (typeof window.matchMedia === 'function') {
+  var colorSchemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (colorSchemeMq.addEventListener) colorSchemeMq.addEventListener('change', applyTheme);
+}
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () { /* offline not available */ });
+  });
+}
+setInterval(checkReminder, 30000);
+checkReminder();
 
 document.querySelectorAll('.tab').forEach(function (btn) {
   btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
