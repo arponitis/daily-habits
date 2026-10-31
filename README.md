@@ -35,6 +35,17 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
+## Development
+
+Pure logic (dates, streaks, import validation, migrations) lives in `lib.js`
+with no DOM dependencies, so it is unit tested in Node:
+
+```sh
+npm test
+```
+
+The suite runs with `TZ=America/New_York` so DST boundary cases are exercised.
+
 ## Deploy
 
 Live via **GitHub Pages**: repo Settings → Pages → Deploy from a branch →
@@ -48,7 +59,9 @@ this repo.
 ```
 index.html            markup + tab shell
 styles.css            mobile-first styles
-app.js                all logic (state, streaks, rendering)
+lib.js                pure logic (dates, streaks, validation, migrations) — no DOM
+app.js                UI: state, rendering, interactions (consumes lib.js)
+test/                 node:test unit suite (npm test)
 manifest.webmanifest  PWA manifest
 icon-*.png            app icons
 ```

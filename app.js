@@ -16,15 +16,20 @@ var EMOJI_CHOICES = ['📖','🧘','🚫','🏃','💧','📝','🎸','🧠','�
 
 function uid() { return 'h_' + Math.random().toString(36).slice(2, 10); }
 
-function loadState() {
+function loadRaw() {
   try {
     var raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       var s = JSON.parse(raw);
-      if (s && Array.isArray(s.habits) && s.days) return s;
+      if (s && typeof s === 'object') return s;
     }
   } catch (e) { /* corrupted or unavailable storage -> start fresh */ }
+  return null;
+}
+
+function seedState() {
   return {
+    v: DH.CURRENT_SCHEMA_VERSION,
     habits: SEED_HABITS.map(function (h) {
       return { id: uid(), name: h.name, icon: h.icon, createdAt: Date.now(), archived: false };
     }),
@@ -33,10 +38,39 @@ function loadState() {
 }
 
 function saveState() {
+  state.v = DH.CURRENT_SCHEMA_VERSION;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
 }
 
-var state = loadState();
+/* Stash a copy under a backup key instead of ever silently wiping user data. */
+function backupRaw(raw) {
+  try {
+    if (raw) localStorage.setItem(STORE_KEY + '.backup-' + Date.now(), raw);
+  } catch (e) {}
+}
+
+var state;
+try {
+  state = DH.migrateState(loadRaw() || seedState());
+} catch (e) {
+  // Payload claims a schema newer than this build understands: back it up
+  // and start fresh rather than destroying it.
+  backupRaw(localStorage.getItem(STORE_KEY));
+  state = seedState();
+}
+
+/* ---------------- shared pure logic (lib.js) ----------------
+ * Date/streak logic lives in lib.js (globalThis.DH) so it is unit tested in
+ * Node. These thin wrappers are defined before first use and keep the app.js
+ * call sites readable. */
+var dayKey = DH.dayKey;
+var parseKey = DH.parseKey;
+var todayKey = DH.todayKey;
+var addDays = DH.addDays;
+
+function currentStreak(hid) { return DH.currentStreak(state.days, hid, todayKey()); }
+function bestStreak(hid) { return DH.bestStreak(state.days, hid); }
+function totalDone(hid) { return DH.totalDone(state.days, hid); }
 
 /* UI state (not persisted) */
 var viewDate  = todayKey();          // YYYY-MM-DD shown in check-in tab
@@ -44,27 +78,6 @@ var viewMonth = viewDate.slice(0, 7); // YYYY-MM shown in calendar tab
 var activeTab = 'checkin';
 var openCard  = null;                // habit id expanded in check-in tab
 var newIcon   = EMOJI_CHOICES[3];    // default icon for the add-habit form
-
-/* ---------------- date helpers (local time) ---------------- */
-
-function pad(n) { return String(n).padStart(2, '0'); }
-
-function dayKey(d) {
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-}
-
-function parseKey(k) {
-  var p = k.split('-');
-  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
-}
-
-function todayKey() { return dayKey(new Date()); }
-
-function addDays(key, n) {
-  var d = parseKey(key);
-  d.setDate(d.getDate() + n);
-  return dayKey(d);
-}
 
 function fmtLong(key) {
   return parseKey(key).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -95,6 +108,7 @@ function setNote(key, hid, note) {
   if (!state.days[key]) state.days[key] = {};
   var e = state.days[key][hid] || (state.days[key][hid] = {});
   e.note = note;
+  if (typeof e.done !== 'boolean') e.done = false; // keep entries valid for export/import
   prune(key, hid);
   saveState();
 }
@@ -105,33 +119,7 @@ function prune(key, hid) {
   if (state.days[key] && Object.keys(state.days[key]).length === 0) delete state.days[key];
 }
 
-/* ---------------- stats ---------------- */
-
-function currentStreak(hid) {
-  var s = 0;
-  var d = new Date();
-  if (!isDone(dayKey(d), hid)) d.setDate(d.getDate() - 1); // today unchecked: streak alive from yesterday
-  while (isDone(dayKey(d), hid)) { s++; d.setDate(d.getDate() - 1); }
-  return s;
-}
-
-function bestStreak(hid) {
-  var best = 0, cur = 0, prev = null;
-  var keys = Object.keys(state.days).sort();
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    if (!isDone(k, hid)) { cur = 0; prev = null; continue; }
-    var t = parseKey(k).getTime();
-    cur = (prev !== null && t - prev === 86400000) ? cur + 1 : 1;
-    prev = t;
-    if (cur > best) best = cur;
-  }
-  return best;
-}
-
-function totalDone(hid) {
-  return Object.keys(state.days).filter(function (k) { return isDone(k, hid); }).length;
-}
+/* ---------------- stats (see lib.js) ---------------- */
 
 /* ---------------- habit management ---------------- */
 
@@ -200,13 +188,22 @@ function handleImport(input) {
   r.onload = function () {
     try {
       var s = JSON.parse(r.result);
-      if (!s || !Array.isArray(s.habits) || !s.days) throw new Error('bad file');
-      state = s;
+      var check = DH.validateImport(s);
+      if (!check.ok) {
+        alert('Could not import that file:\n- ' + check.errors.slice(0, 5).join('\n- '));
+        return;
+      }
+      try {
+        state = DH.migrateState(s);
+      } catch (merr) {
+        alert('Could not import: ' + merr.message);
+        return;
+      }
       saveState();
       render();
       alert('Import complete.');
     } catch (e) {
-      alert('Could not import that file — it is not a Daily Habits export.');
+      alert('Could not import that file — it is not valid JSON.');
     }
     input.value = '';
   };
@@ -215,8 +212,9 @@ function handleImport(input) {
 
 function wipeData() {
   if (!confirm('Delete ALL habits and history on this device? This cannot be undone.')) return;
+  backupRaw(localStorage.getItem(STORE_KEY)); // recoverable copy, just in case
   localStorage.removeItem(STORE_KEY);
-  state = loadState();
+  state = seedState();
   viewDate = todayKey();
   viewMonth = viewDate.slice(0, 7);
   saveState();
@@ -392,7 +390,7 @@ function renderMore() {
     '<div style="height:10px"></div>' +
     '<button type="button" class="btn danger" onclick="wipeData()">Delete all data</button></div>';
 
-  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.0 — check in once a day, watch the streaks grow. ' +
+  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.1 — check in once a day, watch the streaks grow. ' +
     'Add to your home screen for the full app feel.</p></div>';
 
   document.getElementById('view').innerHTML = html;
@@ -414,8 +412,54 @@ function render() {
 
 function toggleCard(hid) { openCard = (openCard === hid) ? null : hid; render(); }
 
+/* ---------------- undo ---------------- */
+
+var undoStack = [];
+var toastTimer = null;
+
+function showToast(msg, actionLabel, onAction) {
+  var t = document.getElementById('toast');
+  t.innerHTML = '';
+  var s = document.createElement('span');
+  s.textContent = msg;
+  t.appendChild(s);
+  if (actionLabel) {
+    var b = document.createElement('button');
+    b.className = 'toast-btn';
+    b.type = 'button';
+    b.textContent = actionLabel;
+    b.onclick = function () { hideToast(); onAction(); };
+    t.appendChild(b);
+  }
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 6000);
+}
+
+function hideToast() {
+  document.getElementById('toast').hidden = true;
+  clearTimeout(toastTimer);
+}
+
+function habitName(hid) {
+  var h = state.habits.find(function (x) { return x.id === hid; });
+  return h ? h.name : 'Habit';
+}
+
 function toggleDone(hid) {
-  setDone(viewDate, hid, !isDone(viewDate, hid));
+  var key = viewDate;
+  var prev = isDone(key, hid);
+  setDone(key, hid, !prev);
+  undoStack.push({ key: key, hid: hid, prev: prev });
+  if (undoStack.length > 20) undoStack.shift();
+  showToast((prev ? 'Unchecked ' : 'Checked ') + habitName(hid), 'Undo', undoLast);
+  render();
+}
+
+function undoLast() {
+  var u = undoStack.pop();
+  if (!u) return;
+  setDone(u.key, u.hid, u.prev);
   render();
 }
 
