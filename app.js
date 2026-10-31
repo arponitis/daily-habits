@@ -40,7 +40,10 @@ function seedState() {
 
 function saveState() {
   state.v = DH.CURRENT_SCHEMA_VERSION;
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+  catch (e) {
+    showToast('⚠️ Could not save — storage may be full. Export your data!', 'Export', exportData);
+  }
 }
 
 /* Stash a copy under a backup key instead of ever silently wiping user data. */
@@ -169,7 +172,11 @@ function addHabit() {
 function pickSchedType(el, type) {
   newScheduleType = type;
   var btns = document.querySelectorAll('#newSchedSeg .seg-btn');
-  for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('sel', btns[i] === el);
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i] === el;
+    btns[i].classList.toggle('sel', on);
+    btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
   document.getElementById('newWeekdaysWrap').hidden = type !== 'weekdays';
   document.getElementById('newTimesWrap').hidden = type !== 'timesPerWeek';
 }
@@ -178,19 +185,29 @@ function toggleNewWeekday(el) {
   var d = Number(el.getAttribute('data-d'));
   var i = newWeekdays.indexOf(d);
   if (i === -1) newWeekdays.push(d); else newWeekdays.splice(i, 1);
-  el.classList.toggle('sel', i === -1);
+  var on = i === -1;
+  el.classList.toggle('sel', on);
+  el.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
 
 function pickIcon(el, icon) {
   newIcon = icon;
   var btns = document.querySelectorAll('.emoji-pick');
-  for (var i = 0; i < btns.length; i++) btns[i].classList.remove('sel');
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i] === el;
+    btns[i].classList.toggle('sel', on);
+    btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
   el.classList.add('sel');
 }
 
 function toggleEditor(hid) { editingHabit = (editingHabit === hid) ? null : hid; render(); }
 
-function toggleEditWeekday(el) { el.classList.toggle('sel'); }
+function toggleEditWeekday(el) {
+  var on = !el.classList.contains('sel');
+  el.classList.toggle('sel', on);
+  el.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
 
 function editSchedChanged(hid) {
   var st = document.getElementById('edit-sched-' + hid).value;
@@ -201,8 +218,9 @@ function editSchedChanged(hid) {
 function editorHtml(h) {
   var s = DH.normSchedule(h);
   var dayBtns = ['S','M','T','W','T','F','S'].map(function (lbl, i) {
-    return '<button type="button" class="day-btn' + (s.days && s.days.indexOf(i) !== -1 ? ' sel' : '') +
-           '" data-d="' + i + '" onclick="toggleEditWeekday(this)">' + lbl + '</button>';
+    var on = !!(s.days && s.days.indexOf(i) !== -1);
+    return '<button type="button" class="day-btn' + (on ? ' sel' : '') + '" aria-pressed="' + on + '"' +
+           ' data-d="' + i + '" onclick="toggleEditWeekday(this)" aria-label="' + DOW_NAMES[i] + '">' + lbl + '</button>';
   }).join('');
   return '<div class="editor">' +
     '<div class="field"><label>Name</label>' +
@@ -279,16 +297,123 @@ function deleteHabit(hid) {
   render();
 }
 
-/* ---------------- import / export ---------------- */
+/* ---------------- encrypted backup ---------------- */
 
-function exportData() {
-  var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+function downloadFile(name, text) {
+  var blob = new Blob([text], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'daily-habits-export-' + todayKey() + '.json';
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 500);
+}
+
+function getWebCrypto() {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) return window.crypto;
+  return null;
+}
+
+async function exportEncrypted() {
+  var c = getWebCrypto();
+  if (!c) { alert('Encrypted backup needs WebCrypto (use HTTPS or localhost).'); return; }
+  var pw = prompt('Set a password for this encrypted backup:');
+  if (!pw) return;
+  if (prompt('Repeat the password:') !== pw) { alert('Passwords did not match.'); return; }
+  try {
+    var payload = await DH.encryptBackup(c, JSON.stringify(state), pw);
+    downloadFile('daily-habits-backup-' + todayKey() + '.enc.json', JSON.stringify(payload, null, 2));
+    showToast('🔐 Encrypted backup downloaded');
+  } catch (e) {
+    alert('Could not create the backup: ' + (e && e.message ? e.message : e));
+  }
+}
+
+function triggerEncryptedImport() { document.getElementById('importEncFile').click(); }
+
+function applyImportedState(incoming, label) {
+  var merge = confirm('Merge into your current data?\n\nOK = merge (union of both devices)\nCancel = replace everything');
+  try {
+    state = merge ? DH.migrateState(DH.mergeStates(state, incoming)) : DH.migrateState(incoming);
+  } catch (merr) {
+    alert('Could not import: ' + merr.message);
+    return;
+  }
+  saveState();
+  render();
+  alert(label + (merge ? ' merged.' : ' replaced.'));
+}
+
+function handleEncryptedImport(input) {
+  var f = input.files && input.files[0];
+  if (!f) return;
+  var c = getWebCrypto();
+  if (!c) { alert('Encrypted import needs WebCrypto (use HTTPS or localhost).'); input.value = ''; return; }
+  var r = new FileReader();
+  r.onload = function () {
+    (async function () {
+      try {
+        var payload = JSON.parse(r.result);
+        var pw = prompt('Password for this backup:');
+        if (!pw) return;
+        var json;
+        try { json = await DH.decryptBackup(c, payload, pw); }
+        catch (de) { alert('Could not decrypt — wrong password or a corrupted file.'); return; }
+        var s = JSON.parse(json);
+        var check = DH.validateImport(s);
+        if (!check.ok) {
+          alert('Backup contents are invalid:\n- ' + check.errors.slice(0, 5).join('\n- '));
+          return;
+        }
+        applyImportedState(s, 'Backup');
+      } catch (e) {
+        alert('Could not read that backup file.');
+      } finally {
+        input.value = '';
+      }
+    })();
+  };
+  r.readAsText(f);
+}
+
+/* ---------------- share ---------------- */
+
+function shareHabit(hid) {
+  var h = habitById(hid);
+  if (!h) return;
+  var unit = DH.normSchedule(h).type === 'timesPerWeek' ? 'week' : 'day';
+  var text = '🔥 ' + currentStreak(h.id) + '-' + unit + ' streak on "' + h.name + '" — tracked with Daily Habits';
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    navigator.share({ title: 'Daily Habits', text: text }).catch(function () {});
+  } else if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { showToast('Copied to clipboard!'); });
+  } else {
+    prompt('Copy your streak:', text);
+  }
+}
+
+/* ---------------- deep link ---------------- */
+
+function handleDeepLink() {
+  if (typeof window === 'undefined' || !window.location || !window.location.search) return;
+  var m = /[?&]toggle=([^&]+)/.exec(window.location.search);
+  if (!m) return;
+  if (window.history && window.history.replaceState) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+  var h = habitById(decodeURIComponent(m[1]));
+  if (!h || h.archived) return;
+  var key = todayKey();
+  if (!isDone(key, h.id)) {
+    setDone(key, h.id, true);
+    showToast('Checked in: ' + h.name + ' ✓');
+  }
+}
+
+/* ---------------- import / export ---------------- */
+
+function exportData() {
+  downloadFile('daily-habits-export-' + todayKey() + '.json', JSON.stringify(state, null, 2));
 }
 
 function triggerImport() { document.getElementById('importFile').click(); }
@@ -305,15 +430,7 @@ function handleImport(input) {
         alert('Could not import that file:\n- ' + check.errors.slice(0, 5).join('\n- '));
         return;
       }
-      try {
-        state = DH.migrateState(s);
-      } catch (merr) {
-        alert('Could not import: ' + merr.message);
-        return;
-      }
-      saveState();
-      render();
-      alert('Import complete.');
+      applyImportedState(s, 'Import');
     } catch (e) {
       alert('Could not import that file — it is not valid JSON.');
     }
@@ -449,6 +566,82 @@ function welcomeHtml() {
     '<button type="button" class="btn ghost" onclick="dismissWelcome()">Got it</button></div></div>';
 }
 
+/* ---------------- PWA install ---------------- */
+
+var deferredInstallPrompt = null;
+
+function isStandalone() {
+  return (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches) ||
+         (typeof navigator !== 'undefined' && navigator.standalone === true);
+}
+
+function installApp() {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  deferredInstallPrompt.userChoice.then(function () { deferredInstallPrompt = null; render(); })
+    .catch(function () { deferredInstallPrompt = null; render(); });
+}
+
+/* ---------------- offline status ---------------- */
+
+function updateOnlinePill() {
+  var offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  var pill = document.getElementById('offlinePill');
+  if (pill) pill.hidden = !offline;
+  if (offline) showToast('📡 You are offline — your data is safe on this device.');
+}
+
+/* ---------------- diagnostics ---------------- */
+
+var ERR_KEY = 'daily-habits/v1.errors';
+var APP_VERSION = '1.5.0';
+
+function logError(msg, src) {
+  try {
+    var log = JSON.parse(localStorage.getItem(ERR_KEY) || '[]');
+    log.push({ t: new Date().toISOString(), msg: String(msg).slice(0, 200), src: src || '' });
+    while (log.length > 20) log.shift();
+    localStorage.setItem(ERR_KEY, JSON.stringify(log));
+  } catch (e) { /* logging must never throw */ }
+}
+
+function getErrorLog() {
+  try { return JSON.parse(localStorage.getItem(ERR_KEY) || '[]'); } catch (e) { return []; }
+}
+
+function clearErrors() {
+  try { localStorage.removeItem(ERR_KEY); } catch (e) {}
+  render();
+}
+
+function fillStorageDiag() {
+  var el = document.getElementById('diagStorage');
+  var done = function (txt) { if (el) el.textContent = txt; };
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+    navigator.storage.estimate().then(function (est) {
+      done(Math.round((est.usage || 0) / 1024) + ' KB used');
+    }).catch(function () { done('unavailable'); });
+  } else done('unavailable');
+}
+
+function renderDiagnostics() {
+  var log = getErrorLog();
+  var swStatus = (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.controller)
+    ? 'active' : 'not registered';
+  var html = '<div class="card"><h2>Diagnostics</h2>' +
+    '<div class="diag-row"><span>Version</span><b>' + APP_VERSION + '</b></div>' +
+    '<div class="diag-row"><span>Service worker</span><b>' + esc(swStatus) + '</b></div>' +
+    '<div class="diag-row"><span>Stored data</span><b id="diagStorage">…</b></div>' +
+    '<h3 class="diag-h">Recent errors (' + log.length + ')</h3>';
+  if (!log.length) html += '<p class="hint">None recorded.</p>';
+  else html += '<div class="err-log">' + log.slice().reverse().map(function (e) {
+    return '<div class="err"><span class="err-t">' + esc(String(e.t).slice(0, 16).replace('T', ' ')) + '</span> ' + esc(e.msg) + '</div>';
+  }).join('') + '</div>';
+  html += '<div class="btn-row"><button type="button" class="btn ghost" onclick="clearErrors()">Clear errors</button>' +
+    '<button type="button" class="btn ghost" onclick="fillStorageDiag()">Check storage</button></div></div>';
+  return html;
+}
+
 /* ---------------- rendering ---------------- */
 
 function esc(s) {
@@ -477,6 +670,8 @@ function renderHeader() {
   document.getElementById('dateLine').textContent =
     new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('dayRing').innerHTML = ring(list.length ? done / list.length : 0, done + '/' + list.length);
+  var offlinePill = document.getElementById('offlinePill');
+  if (offlinePill) offlinePill.hidden = !(typeof navigator !== 'undefined' && navigator.onLine === false);
 }
 
 function weekStrip(key, hid) {
@@ -504,7 +699,7 @@ function habitCard(h, key) {
       '<div class="habit-ico">' + esc(h.icon) + '</div>' +
       '<div class="habit-meta"><div class="habit-name">' + esc(h.name) + '</div>' +
       '<div class="habit-sub">' + sub + '</div></div>' +
-      '<button type="button" class="check' + (done ? ' on' : '') + '" ' +
+      '<button type="button" class="check' + (done ? ' on' : '') + '" aria-pressed="' + done + '" ' +
         'onclick="event.stopPropagation();toggleDone(\'' + h.id + '\')" aria-label="Toggle ' + esc(h.name) + '">✓</button>' +
     '</div></div>';
 }
@@ -534,7 +729,7 @@ function sheetHtml(h, key) {
   var wp = DH.weekProgress(state.days, h, DH.isoWeekKey(key));
   var streakUnit = DH.normSchedule(h).type === 'timesPerWeek' ? 'wk' : 'day';
   return '<div class="sheet-backdrop" onclick="closeSheet()"></div>' +
-  '<div class="sheet" role="dialog" aria-label="' + esc(h.name) + '"' +
+  '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(h.name) + '"' +
     ' ontouchstart="sheetTouchStart(event)" ontouchend="sheetTouchEnd(event)">' +
     '<div class="sheet-grab"></div>' +
     '<div class="sheet-head"><div class="habit-ico">' + esc(h.icon) + '</div>' +
@@ -554,6 +749,7 @@ function sheetHtml(h, key) {
       'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea></div>' +
     '<button type="button" class="btn sheet-cta" onclick="toggleDone(\'' + h.id + '\');closeSheet();">' +
       (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
+    '<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="shareHabit(\'' + h.id + '\')">Share streak</button>' +
   '</div>';
 }
 
@@ -581,11 +777,12 @@ function renderCheckin() {
     if (c && cats.indexOf(c) === -1) cats.push(c);
   });
   if (cats.length) {
-    html += '<div class="chips"><button type="button" class="chip' + (activeCat === 'All' ? ' sel' : '') +
+    html += '<div class="chips" role="group" aria-label="Filter by category">' +
+      '<button type="button" class="chip' + (activeCat === 'All' ? ' sel' : '') + '" aria-pressed="' + (activeCat === 'All') + '"' +
             '" onclick="setCat(\'All\')">All</button>' +
       cats.map(function (c) {
-        return '<button type="button" class="chip' + (activeCat === c ? ' sel' : '') +
-               '" data-c="' + esc(c) + '" onclick="setCat(this.getAttribute(\'data-c\'))">' + esc(c) + '</button>';
+        return '<button type="button" class="chip' + (activeCat === c ? ' sel' : '') + '" aria-pressed="' + (activeCat === c) + '"' +
+               ' data-c="' + esc(c) + '" onclick="setCat(this.getAttribute(\'data-c\'))">' + esc(c) + '</button>';
       }).join('') + '</div>';
     if (activeCat !== 'All') {
       habits = habits.filter(function (h) { return (h.category || '').trim() === activeCat; });
@@ -769,18 +966,19 @@ function renderMore() {
     '<input id="newHabitName" class="text-in" maxlength="40" placeholder="e.g. Read 20 pages" autocomplete="off"></div>' +
     '<div class="field"><label>Icon</label><div class="emoji-row">' +
     EMOJI_CHOICES.map(function (e) {
-      return '<button type="button" class="emoji-pick' + (e === newIcon ? ' sel' : '') +
-             '" onclick="pickIcon(this,\'' + e + '\')">' + e + '</button>';
+      return '<button type="button" class="emoji-pick' + (e === newIcon ? ' sel' : '') + '" aria-pressed="' + (e === newIcon) + '"' +
+             ' onclick="pickIcon(this,\'' + e + '\')" aria-label="Icon ' + e + '">' + e + '</button>';
     }).join('') + '</div></div>' +
-    '<div class="field"><label>Schedule</label><div class="seg" id="newSchedSeg">' +
-      '<button type="button" class="seg-btn sel" onclick="pickSchedType(this,\'daily\')">Daily</button>' +
-      '<button type="button" class="seg-btn" onclick="pickSchedType(this,\'weekdays\')">Days</button>' +
-      '<button type="button" class="seg-btn" onclick="pickSchedType(this,\'timesPerWeek\')">×/week</button>' +
+    '<div class="field"><label>Schedule</label><div class="seg" id="newSchedSeg" role="group" aria-label="Schedule">' +
+      '<button type="button" class="seg-btn sel" aria-pressed="true" onclick="pickSchedType(this,\'daily\')">Daily</button>' +
+      '<button type="button" class="seg-btn" aria-pressed="false" onclick="pickSchedType(this,\'weekdays\')">Days</button>' +
+      '<button type="button" class="seg-btn" aria-pressed="false" onclick="pickSchedType(this,\'timesPerWeek\')">×/week</button>' +
     '</div></div>' +
-    '<div class="field" id="newWeekdaysWrap" hidden><label>Which days</label><div class="day-pick">' +
+    '<div class="field" id="newWeekdaysWrap" hidden><label>Which days</label><div class="day-pick" role="group" aria-label="Which days">' +
       ['S','M','T','W','T','F','S'].map(function (lbl, i) {
-        return '<button type="button" class="day-btn' + (newWeekdays.indexOf(i) !== -1 ? ' sel' : '') +
-               '" data-d="' + i + '" onclick="toggleNewWeekday(this)">' + lbl + '</button>';
+        var on = newWeekdays.indexOf(i) !== -1;
+        return '<button type="button" class="day-btn' + (on ? ' sel' : '') + '" aria-pressed="' + on + '"' +
+               ' data-d="' + i + '" onclick="toggleNewWeekday(this)" aria-label="' + DOW_NAMES[i] + '">' + lbl + '</button>';
       }).join('') + '</div></div>' +
     '<div class="field" id="newTimesWrap" hidden><label for="newTimes">Times per week</label>' +
       '<input id="newTimes" type="number" min="1" max="7" value="3" class="text-in"></div>' +
@@ -811,10 +1009,10 @@ function renderMore() {
 
   var curTheme = 'auto';
   try { curTheme = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) {}
-  html += '<div class="card"><h2>Appearance</h2><div class="seg">' +
+  html += '<div class="card"><h2>Appearance</h2><div class="seg" role="group" aria-label="Theme">' +
     ['auto', 'light', 'dark'].map(function (t) {
-      return '<button type="button" class="seg-btn' + (curTheme === t ? ' sel' : '') +
-             '" onclick="setTheme(\'' + t + '\')">' + t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
+      return '<button type="button" class="seg-btn' + (curTheme === t ? ' sel' : '') + '" aria-pressed="' + (curTheme === t) + '"' +
+             ' onclick="setTheme(\'' + t + '\')">' + t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
     }).join('') + '</div></div>';
 
   var rem = getReminder();
@@ -826,14 +1024,30 @@ function renderMore() {
     '<button type="button" class="btn ghost" onclick="testReminder()">Send test</button></div>' +
     '<p class="hint">Status: ' + esc(notifState) + (rem.time ? ' · set for ' + esc(rem.time) : ' · no time set') + '</p></div>';
 
+  if (deferredInstallPrompt && !isStandalone()) {
+    html += '<div class="card"><h2>Install the app</h2>' +
+      '<p class="hint">Add Daily Habits to your home screen for the full app experience.</p>' +
+      '<button type="button" class="btn" onclick="installApp()">Install app</button></div>';
+  }
+
+  html += renderDiagnostics();
+
   html += '<div class="card"><h2>Data</h2><p class="hint">Your data never leaves this device unless you export it.</p>' +
     '<div class="btn-row"><button type="button" class="btn ghost" onclick="exportData()">Export</button>' +
     '<button type="button" class="btn ghost" onclick="triggerImport()">Import</button></div>' +
     '<div style="height:10px"></div>' +
+    '<div class="btn-row"><button type="button" class="btn ghost" onclick="exportEncrypted()">Export encrypted</button>' +
+    '<button type="button" class="btn ghost" onclick="triggerEncryptedImport()">Import encrypted</button></div>' +
+    '<p class="hint">Encrypted backups (AES-GCM, password-protected) are the way to move data between devices: ' +
+    'export here, copy the file via your cloud drive, then import + merge on the other device.</p>' +
+    '<div style="height:10px"></div>' +
     '<button type="button" class="btn danger" onclick="wipeData()">Delete all data</button></div>';
 
-  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.3 — check in once a day, watch the streaks grow. ' +
-    'Add to your home screen for the full app feel.</p></div>';
+  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v' + APP_VERSION +
+    ' — check in once a day, watch the streaks grow. ' +
+    'Add to your home screen for the full app feel.</p>' +
+    '<p class="hint"><a href="landing.html">About this app</a> · ' +
+    '<a href="https://github.com/arponitis/daily-habits">GitHub</a></p></div>';
 
   document.getElementById('view').innerHTML = html;
 }
@@ -957,23 +1171,56 @@ function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); }
 /* ---------------- boot ---------------- */
 
 applyTheme();
+
+window.addEventListener('error', function (e) { logError(e.message || 'Unknown error', 'window'); });
+window.addEventListener('unhandledrejection', function (e) {
+  var r = e.reason;
+  logError('Unhandled rejection: ' + (r && r.message ? r.message : String(r)), 'promise');
+});
+
+window.addEventListener('beforeinstallprompt', function (e) {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  render();
+});
+window.addEventListener('appinstalled', function () {
+  deferredInstallPrompt = null;
+  showToast('🎉 Installed! Find Daily Habits on your home screen.');
+  render();
+});
+window.addEventListener('online', updateOnlinePill);
+window.addEventListener('offline', updateOnlinePill);
+
 if (typeof window.matchMedia === 'function') {
   var colorSchemeMq = window.matchMedia('(prefers-color-scheme: dark)');
   if (colorSchemeMq.addEventListener) colorSchemeMq.addEventListener('change', applyTheme);
 }
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () { /* offline not available */ });
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            showToast('✨ A new version is ready', 'Refresh', function () { window.location.reload(); });
+          }
+        });
+      });
+    }).catch(function () { /* offline not available */ });
   });
 }
 setInterval(checkReminder, 30000);
 checkReminder();
+handleDeepLink();
 
 document.querySelectorAll('.tab').forEach(function (btn) {
   btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
 });
 document.getElementById('importFile').addEventListener('change', function () { handleImport(this); });
+document.getElementById('importEncFile').addEventListener('change', function () { handleEncryptedImport(this); });
 document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && sheetHabit) { closeSheet(); return; }
   if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'newHabitName') addHabit();
 });
 
