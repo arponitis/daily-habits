@@ -251,6 +251,115 @@
     return { done: done, target: target };
   }
 
+  /* ---------------- insights (Phase 3) ----------------
+   * Read-only computations over local data for the Stats tab. All take the
+   * plain `days` map and habit objects; none touch storage or the DOM.
+   */
+
+  function scheduledDaysInRange(schedule, fromKey, toKey) {
+    var n = 0;
+    var d = parseKey(fromKey);
+    var guard = 0;
+    while (dayKey(d) <= toKey && guard++ < 370) {
+      if (isScheduledDay(schedule, dayKey(d))) n++;
+      d.setDate(d.getDate() + 1);
+    }
+    return n;
+  }
+
+  function doneInRange(days, hid, fromKey, toKey) {
+    var n = 0;
+    var d = parseKey(fromKey);
+    var guard = 0;
+    while (dayKey(d) <= toKey && guard++ < 370) {
+      if (isDoneIn(days, dayKey(d), hid)) n++;
+      d.setDate(d.getDate() + 1);
+    }
+    return n;
+  }
+
+  /**
+   * Per-weekday completion over a date range: [{ dow, done, scheduled, rate }].
+   */
+  function weekdayCompletion(days, habits, fromKey, toKey) {
+    var out = [];
+    for (var d = 0; d < 7; d++) out.push({ dow: d, done: 0, scheduled: 0, rate: 0 });
+    var dd = parseKey(fromKey);
+    var guard = 0;
+    while (dayKey(dd) <= toKey && guard++ < 370) {
+      var k = dayKey(dd);
+      var dow = dd.getDay();
+      (habits || []).forEach(function (h) {
+        if (isScheduledDay(h.schedule, k)) {
+          out[dow].scheduled++;
+          if (isDoneIn(days, k, h.id)) out[dow].done++;
+        }
+      });
+      dd.setDate(dd.getDate() + 1);
+    }
+    out.forEach(function (o) { o.rate = o.scheduled ? o.done / o.scheduled : 0; });
+    return out;
+  }
+
+  /**
+   * Aggregate insights for the Stats tab:
+   * {
+   *   bestWeekday: { dow, rate } | null,       // last 28 days, needs >= 4 scheduled
+   *   mostConsistent: { id, name, icon, rate, done, scheduled } | null,
+   *   thisWeek: { done, total }, lastWeek: { done, total },
+   *   longestActiveStreak: { id, name, icon, n } | null
+   * }
+   */
+  function insights(days, habits, today) {
+    var act = (habits || []).filter(function (h) { return !h.archived; });
+    var from = addDays(today, -27);
+
+    var bestWeekday = null;
+    weekdayCompletion(days, act, from, today).forEach(function (w) {
+      if (w.scheduled >= 4 && (!bestWeekday || w.rate > bestWeekday.rate)) {
+        bestWeekday = { dow: w.dow, rate: w.rate };
+      }
+    });
+
+    var mostConsistent = null;
+    act.forEach(function (h) {
+      var sched = scheduledDaysInRange(h.schedule, from, today);
+      if (sched < 7) return; // not enough history to judge
+      var done = doneInRange(days, h.id, from, today);
+      var rate = done / sched;
+      if (!mostConsistent || rate > mostConsistent.rate) {
+        mostConsistent = { id: h.id, name: h.name, icon: h.icon, rate: rate, done: done, scheduled: sched };
+      }
+    });
+
+    var cw = isoWeekKey(today);
+    var lw = addWeeks(cw, -1);
+    var tw = { done: 0, total: 0 };
+    var lwk = { done: 0, total: 0 };
+    act.forEach(function (h) {
+      var p1 = weekProgress(days, h, cw);
+      var p2 = weekProgress(days, h, lw);
+      tw.done += Math.min(p1.done, p1.target); tw.total += p1.target;
+      lwk.done += Math.min(p2.done, p2.target); lwk.total += p2.target;
+    });
+
+    var longestActiveStreak = null;
+    act.forEach(function (h) {
+      var n = currentStreak(days, h.id, today, h.schedule);
+      if (n > 0 && (!longestActiveStreak || n > longestActiveStreak.n)) {
+        longestActiveStreak = { id: h.id, name: h.name, icon: h.icon, n: n };
+      }
+    });
+
+    return {
+      bestWeekday: bestWeekday,
+      mostConsistent: mostConsistent,
+      thisWeek: tw,
+      lastWeek: lwk,
+      longestActiveStreak: longestActiveStreak
+    };
+  }
+
   /**
    * Validate an imported payload before it touches stored state.
    * Returns { ok: boolean, errors: string[] }.
@@ -388,6 +497,10 @@
     prevScheduledDay: prevScheduledDay,
     streakDays: streakDays,
     weeklyTargetFor: weeklyTargetFor,
-    weekProgress: weekProgress
+    weekProgress: weekProgress,
+    scheduledDaysInRange: scheduledDaysInRange,
+    doneInRange: doneInRange,
+    weekdayCompletion: weekdayCompletion,
+    insights: insights
   };
 });

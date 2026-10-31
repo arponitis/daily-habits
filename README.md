@@ -23,6 +23,10 @@ Your check-ins stay on the device — each browser keeps its own data.
 - Flexible schedules: daily, specific weekdays, or N times per week (rest days never break streaks)
 - Current / best / total streaks per habit (schedule-aware)
 - Weekly targets and a Stats tab with per-habit weekly completion
+- Weekly insights: best day, most consistent habit, week-over-week trend, longest active streak
+- Daily reminders (local notifications while the app is open)
+- Dark mode (Auto / Light / Dark, follows the OS)
+- Offline support via service worker — install it and it works with no network
 - Last-7-days strip and a month calendar with backfill, streak highlights, and month summaries
 - Habit descriptions and categories with filtering
 - Per-day notes (e.g. what chapter you read)
