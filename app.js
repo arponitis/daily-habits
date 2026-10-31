@@ -594,7 +594,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.5.0';
+var APP_VERSION = '1.6.0';
 
 function logError(msg, src) {
   try {
@@ -742,6 +742,7 @@ function sheetHtml(h, key) {
       '<div class="stat"><b>' + bestStreak(h.id) + '</b><span>Best</span></div>' +
       '<div class="stat"><b>' + totalDone(h.id) + '</b><span>Total</span></div>' +
     '</div>' +
+    graceLine(h) +
     '<div class="sched-line">This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
     weekStrip(key, h.id) +
     '<div class="field"><label>Note for ' + esc(fmtLong(key)) + '</label>' +
@@ -751,6 +752,14 @@ function sheetHtml(h, key) {
       (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
     '<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="shareHabit(\'' + h.id + '\')">Share streak</button>' +
   '</div>';
+}
+
+function graceLine(h) {
+  if (DH.normSchedule(h).type === 'timesPerWeek') return '';
+  var used = DH.graceUsedThisWeek(state.days, h.id, todayKey(), h.schedule);
+  return '<p class="hint">' + (used > 0
+    ? '❄️ Grace day saved your streak this week'
+    : '❄️ One grace day per week — a single miss won\'t break your streak') + '</p>';
 }
 
 function setCat(c) { activeCat = c; render(); }
