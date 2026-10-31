@@ -29,6 +29,20 @@ Your check-ins stay on the device — each browser keeps its own data.
 - Offline support via service worker — install it and it works with no network
 - Diagnostics card (version, service worker status, storage, error log) in More
 
+## Sync between devices
+
+Daily Habits keeps your data on-device by design — there is no account or cloud.
+To use it on two devices:
+
+1. On device A: More → **Export encrypted**, set a password.
+2. Move the `.enc.json` file to device B (iCloud Drive, Google Drive, AirDrop…).
+3. On device B: More → **Import encrypted**, enter the password, choose **Merge**.
+
+Merge unions both copies: check-ins from either device are kept, each habit
+appears once, and your current device's notes win conflicts. Repeat in either
+direction to stay in sync. Backups use AES-GCM with a PBKDF2-derived key —
+without the password the file is unreadable.
+
 ## Landing page
 
 [landing.html](https://arponitis.github.io/daily-habits/landing.html) — product page with

@@ -297,16 +297,123 @@ function deleteHabit(hid) {
   render();
 }
 
-/* ---------------- import / export ---------------- */
+/* ---------------- encrypted backup ---------------- */
 
-function exportData() {
-  var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+function downloadFile(name, text) {
+  var blob = new Blob([text], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'daily-habits-export-' + todayKey() + '.json';
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 500);
+}
+
+function getWebCrypto() {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) return window.crypto;
+  return null;
+}
+
+async function exportEncrypted() {
+  var c = getWebCrypto();
+  if (!c) { alert('Encrypted backup needs WebCrypto (use HTTPS or localhost).'); return; }
+  var pw = prompt('Set a password for this encrypted backup:');
+  if (!pw) return;
+  if (prompt('Repeat the password:') !== pw) { alert('Passwords did not match.'); return; }
+  try {
+    var payload = await DH.encryptBackup(c, JSON.stringify(state), pw);
+    downloadFile('daily-habits-backup-' + todayKey() + '.enc.json', JSON.stringify(payload, null, 2));
+    showToast('🔐 Encrypted backup downloaded');
+  } catch (e) {
+    alert('Could not create the backup: ' + (e && e.message ? e.message : e));
+  }
+}
+
+function triggerEncryptedImport() { document.getElementById('importEncFile').click(); }
+
+function applyImportedState(incoming, label) {
+  var merge = confirm('Merge into your current data?\n\nOK = merge (union of both devices)\nCancel = replace everything');
+  try {
+    state = merge ? DH.migrateState(DH.mergeStates(state, incoming)) : DH.migrateState(incoming);
+  } catch (merr) {
+    alert('Could not import: ' + merr.message);
+    return;
+  }
+  saveState();
+  render();
+  alert(label + (merge ? ' merged.' : ' replaced.'));
+}
+
+function handleEncryptedImport(input) {
+  var f = input.files && input.files[0];
+  if (!f) return;
+  var c = getWebCrypto();
+  if (!c) { alert('Encrypted import needs WebCrypto (use HTTPS or localhost).'); input.value = ''; return; }
+  var r = new FileReader();
+  r.onload = function () {
+    (async function () {
+      try {
+        var payload = JSON.parse(r.result);
+        var pw = prompt('Password for this backup:');
+        if (!pw) return;
+        var json;
+        try { json = await DH.decryptBackup(c, payload, pw); }
+        catch (de) { alert('Could not decrypt — wrong password or a corrupted file.'); return; }
+        var s = JSON.parse(json);
+        var check = DH.validateImport(s);
+        if (!check.ok) {
+          alert('Backup contents are invalid:\n- ' + check.errors.slice(0, 5).join('\n- '));
+          return;
+        }
+        applyImportedState(s, 'Backup');
+      } catch (e) {
+        alert('Could not read that backup file.');
+      } finally {
+        input.value = '';
+      }
+    })();
+  };
+  r.readAsText(f);
+}
+
+/* ---------------- share ---------------- */
+
+function shareHabit(hid) {
+  var h = habitById(hid);
+  if (!h) return;
+  var unit = DH.normSchedule(h).type === 'timesPerWeek' ? 'week' : 'day';
+  var text = '🔥 ' + currentStreak(h.id) + '-' + unit + ' streak on "' + h.name + '" — tracked with Daily Habits';
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    navigator.share({ title: 'Daily Habits', text: text }).catch(function () {});
+  } else if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { showToast('Copied to clipboard!'); });
+  } else {
+    prompt('Copy your streak:', text);
+  }
+}
+
+/* ---------------- deep link ---------------- */
+
+function handleDeepLink() {
+  if (typeof window === 'undefined' || !window.location || !window.location.search) return;
+  var m = /[?&]toggle=([^&]+)/.exec(window.location.search);
+  if (!m) return;
+  if (window.history && window.history.replaceState) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+  var h = habitById(decodeURIComponent(m[1]));
+  if (!h || h.archived) return;
+  var key = todayKey();
+  if (!isDone(key, h.id)) {
+    setDone(key, h.id, true);
+    showToast('Checked in: ' + h.name + ' ✓');
+  }
+}
+
+/* ---------------- import / export ---------------- */
+
+function exportData() {
+  downloadFile('daily-habits-export-' + todayKey() + '.json', JSON.stringify(state, null, 2));
 }
 
 function triggerImport() { document.getElementById('importFile').click(); }
@@ -323,15 +430,7 @@ function handleImport(input) {
         alert('Could not import that file:\n- ' + check.errors.slice(0, 5).join('\n- '));
         return;
       }
-      try {
-        state = DH.migrateState(s);
-      } catch (merr) {
-        alert('Could not import: ' + merr.message);
-        return;
-      }
-      saveState();
-      render();
-      alert('Import complete.');
+      applyImportedState(s, 'Import');
     } catch (e) {
       alert('Could not import that file — it is not valid JSON.');
     }
@@ -495,7 +594,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.4.0';
+var APP_VERSION = '1.5.0';
 
 function logError(msg, src) {
   try {
@@ -650,6 +749,7 @@ function sheetHtml(h, key) {
       'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea></div>' +
     '<button type="button" class="btn sheet-cta" onclick="toggleDone(\'' + h.id + '\');closeSheet();">' +
       (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
+    '<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="shareHabit(\'' + h.id + '\')">Share streak</button>' +
   '</div>';
 }
 
@@ -790,7 +890,6 @@ function monthSummary(y, m, habits, today) {
   var dim = new Date(y, m + 1, 0).getDate();
   for (var d = 1; d <= dim; d++) {
     var k = dayKey(new Date(y, m, d));
-    if (k > today) break;
     for (var i = 0; i < habits.length; i++) {
       if (DH.isScheduledDay(habits[i].schedule, k)) {
         total++;
@@ -935,6 +1034,11 @@ function renderMore() {
   html += '<div class="card"><h2>Data</h2><p class="hint">Your data never leaves this device unless you export it.</p>' +
     '<div class="btn-row"><button type="button" class="btn ghost" onclick="exportData()">Export</button>' +
     '<button type="button" class="btn ghost" onclick="triggerImport()">Import</button></div>' +
+    '<div style="height:10px"></div>' +
+    '<div class="btn-row"><button type="button" class="btn ghost" onclick="exportEncrypted()">Export encrypted</button>' +
+    '<button type="button" class="btn ghost" onclick="triggerEncryptedImport()">Import encrypted</button></div>' +
+    '<p class="hint">Encrypted backups (AES-GCM, password-protected) are the way to move data between devices: ' +
+    'export here, copy the file via your cloud drive, then import + merge on the other device.</p>' +
     '<div style="height:10px"></div>' +
     '<button type="button" class="btn danger" onclick="wipeData()">Delete all data</button></div>';
 
@@ -1107,11 +1211,13 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
 }
 setInterval(checkReminder, 30000);
 checkReminder();
+handleDeepLink();
 
 document.querySelectorAll('.tab').forEach(function (btn) {
   btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
 });
 document.getElementById('importFile').addEventListener('change', function () { handleImport(this); });
+document.getElementById('importEncFile').addEventListener('change', function () { handleEncryptedImport(this); });
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && sheetHabit) { closeSheet(); return; }
   if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'newHabitName') addHabit();

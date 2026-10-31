@@ -251,6 +251,108 @@
     return { done: done, target: target };
   }
 
+  /* ---------------- encrypted backups + merge (Phase 5) ----------------
+   * AES-GCM with a PBKDF2-SHA256 derived key. The helpers take the crypto
+   * object as a parameter so they run in browsers (window.crypto) and in
+   * Node tests (require('node:crypto').webcrypto) alike.
+   */
+
+  function b64encode(bytes) {
+    var arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    var bin = '';
+    for (var i = 0; i < arr.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
+    }
+    if (typeof btoa === 'function') return btoa(bin);
+    return Buffer.from(bin, 'binary').toString('base64');
+  }
+
+  function b64decode(b64) {
+    var bin;
+    if (typeof atob === 'function') bin = atob(b64);
+    else bin = Buffer.from(b64, 'base64').toString('binary');
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function deriveBackupKey(cryptoObj, password, salt) {
+    var enc = new TextEncoder();
+    return cryptoObj.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        return cryptoObj.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: 200000, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      });
+  }
+
+  /** Encrypt a JSON string with a password. Resolves the backup payload object. */
+  function encryptBackup(cryptoObj, jsonString, password) {
+    var salt = cryptoObj.getRandomValues(new Uint8Array(16));
+    var iv = cryptoObj.getRandomValues(new Uint8Array(12));
+    return deriveBackupKey(cryptoObj, password, salt).then(function (key) {
+      return cryptoObj.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(jsonString));
+    }).then(function (ct) {
+      return {
+        app: 'daily-habits',
+        enc: 'AES-GCM/PBKDF2-SHA256-200k',
+        salt: b64encode(salt),
+        iv: b64encode(iv),
+        data: b64encode(new Uint8Array(ct))
+      };
+    });
+  }
+
+  /**
+   * Decrypt a backup payload with a password. Resolves the JSON string.
+   * Rejects on a wrong password, a corrupted payload, or a foreign format —
+   * never mutates anything.
+   */
+  function decryptBackup(cryptoObj, payload, password) {
+    if (!payload || payload.app !== 'daily-habits' || !payload.salt || !payload.iv || !payload.data) {
+      return Promise.reject(new Error('Not a Daily Habits encrypted backup.'));
+    }
+    return deriveBackupKey(cryptoObj, password, b64decode(payload.salt)).then(function (key) {
+      return cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv: b64decode(payload.iv) }, key, b64decode(payload.data));
+    }).then(function (pt) {
+      return new TextDecoder().decode(pt);
+    });
+  }
+
+  /**
+   * Merge an imported state into the current one — the cross-device sync
+   * primitive. Habits union by id (the current device's definitions win);
+   * day entries merge with done OR-wins and the current device's note
+   * winning conflicts. Neither input is mutated.
+   */
+  function mergeStates(base, incoming) {
+    var out = JSON.parse(JSON.stringify(base || { v: CURRENT_SCHEMA_VERSION, habits: [], days: {} }));
+    if (!Array.isArray(out.habits)) out.habits = [];
+    if (!out.days || typeof out.days !== 'object') out.days = {};
+    var seen = {};
+    out.habits.forEach(function (h) { seen[h.id] = true; });
+    (incoming.habits || []).forEach(function (h) {
+      if (h && h.id && !seen[h.id]) { out.habits.push(JSON.parse(JSON.stringify(h))); seen[h.id] = true; }
+    });
+    Object.keys(incoming.days || {}).forEach(function (k) {
+      if (!out.days[k] || typeof out.days[k] !== 'object') out.days[k] = {};
+      Object.keys(incoming.days[k]).forEach(function (hid) {
+        var inc = incoming.days[k][hid] || {};
+        var cur = out.days[k][hid] || {};
+        var merged = {};
+        if (cur.done || inc.done) merged.done = true;
+        var note = cur.note || inc.note;
+        if (note) merged.note = note;
+        if (merged.done || merged.note) out.days[k][hid] = merged;
+        else delete out.days[k][hid];
+      });
+      if (Object.keys(out.days[k]).length === 0) delete out.days[k];
+    });
+    out.v = CURRENT_SCHEMA_VERSION;
+    return out;
+  }
+
   /* ---------------- insights (Phase 3) ----------------
    * Read-only computations over local data for the Stats tab. All take the
    * plain `days` map and habit objects; none touch storage or the DOM.
@@ -501,6 +603,11 @@
     scheduledDaysInRange: scheduledDaysInRange,
     doneInRange: doneInRange,
     weekdayCompletion: weekdayCompletion,
-    insights: insights
+    insights: insights,
+    b64encode: b64encode,
+    b64decode: b64decode,
+    encryptBackup: encryptBackup,
+    decryptBackup: decryptBackup,
+    mergeStates: mergeStates
   };
 });
