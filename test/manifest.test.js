@@ -23,6 +23,11 @@ test('manifest icons cover 192 and 512 (maskable) and files exist', () => {
   }
 });
 
+test('manifest has a shortcuts entry', () => {
+  assert.ok(Array.isArray(manifest.shortcuts) && manifest.shortcuts.length > 0, 'needs at least one shortcut');
+  assert.ok(manifest.shortcuts[0].url, 'shortcut needs a url');
+});
+
 test('service worker cache version is bumped', () => {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
   assert.match(sw, /CACHE = 'daily-habits-v\d+'/, 'sw.js should declare a versioned cache');
