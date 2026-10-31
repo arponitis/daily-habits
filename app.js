@@ -473,13 +473,14 @@ function saveReminderTime() {
   setReminder(r);
   render();
   if (r.time) showToast('⏰ Reminder set for ' + r.time);
+  syncPushSubscription();
 }
 
 function enableNotifications(cb) {
   if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
-  if (Notification.permission === 'granted') { if (cb) cb(); return; }
+  if (Notification.permission === 'granted') { syncPushSubscription(); if (cb) cb(); return; }
   Notification.requestPermission().then(function (p) {
-    if (p === 'granted') { if (cb) cb(); render(); }
+    if (p === 'granted') { syncPushSubscription(); if (cb) cb(); render(); }
     else alert('Notifications are blocked — enable them in your browser settings to get reminders.');
   });
 }
@@ -512,6 +513,73 @@ function checkReminder() {
     setReminder(r);
     fireReminder(false);
   }
+}
+
+/* ---------------- web push reminders (Phase A #46) ----------------
+   Server-assisted reminders that fire when the app is closed. Needs the
+   push worker deployed (see worker/PUSH_SETUP.md). Until PUSH_ENDPOINT and
+   VAPID_PUBLIC_KEY are set, this section is inert and reminders stay
+   local-only via the in-app scheduler above. All network failures fall
+   back to local reminders silently. */
+
+var PUSH_ENDPOINT = ''; // e.g. 'https://daily-habits-push.<you>.workers.dev'
+var VAPID_PUBLIC_KEY = ''; // public VAPID key — safe to commit
+
+function urlBase64ToUint8Array(b64) {
+  var padding = '='.repeat((4 - (b64.length % 4)) % 4);
+  var raw = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var bin = typeof atob === 'function' ? atob(raw) : Buffer.from(raw, 'base64').toString('binary');
+  var out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function pushSupported() {
+  return !!(PUSH_ENDPOINT && VAPID_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window);
+}
+
+/**
+ * Best-effort sync of the push subscription with the worker:
+ * subscribe/update when a reminder time is set and permission granted,
+ * unsubscribe when the time is cleared or permission is gone.
+ */
+async function syncPushSubscription() {
+  if (!pushSupported()) return;
+  try {
+    var r = getReminder();
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (!r.time || Notification.permission !== 'granted') {
+      if (sub) {
+        try {
+          await fetch(PUSH_ENDPOINT + '/unsubscribe', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint })
+          });
+        } catch (e) {}
+        try { await sub.unsubscribe(); } catch (e) {}
+      }
+      return;
+    }
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+    var parts = r.time.split(':');
+    var json = sub.toJSON();
+    await fetch(PUSH_ENDPOINT + '/subscribe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: sub.endpoint,
+        keys: json.keys,
+        hour: parseInt(parts[0], 10),
+        minute: parseInt(parts[1], 10),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone
+      })
+    });
+  } catch (e) { /* push is best-effort; local reminders still work */ }
 }
 
 /* ---------------- theme ---------------- */
@@ -745,6 +813,7 @@ function sheetHtml(h, key) {
     graceLine(h) +
     '<div class="sched-line">This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
     weekStrip(key, h.id) +
+    heatmapHtml(h) +
     '<div class="field"><label>Note for ' + esc(fmtLong(key)) + '</label>' +
       '<textarea class="note" placeholder="Add a note for this day…" ' +
       'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea></div>' +
@@ -752,6 +821,22 @@ function sheetHtml(h, key) {
       (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
     '<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="shareHabit(\'' + h.id + '\')">Share streak</button>' +
   '</div>';
+}
+
+/** GitHub-style 16-week check-in heatmap for the habit sheet. */
+function heatmapHtml(h) {
+  var cols = DH.heatmapData(state.days, h.id, h.schedule, todayKey(), 16);
+  var html = '<div class="hm-label">Last 16 weeks</div>' +
+    '<div class="heatmap" role="img" aria-label="Check-in history heatmap">';
+  for (var w = 0; w < cols.length; w++) {
+    html += '<div class="hm-col">';
+    for (var i = 0; i < 7; i++) {
+      var c = cols[w][i];
+      html += '<div class="hm-cell hm-' + c.state + '" title="' + c.key + '"></div>';
+    }
+    html += '</div>';
+  }
+  return html + '</div>';
 }
 
 function graceLine(h) {
