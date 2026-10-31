@@ -41,13 +41,13 @@ test('bestStreak survives DST transitions (regression)', () => {
   assert.equal(DH.bestStreak(fall, 'h1'), 3);
 });
 
-test('bestStreak ignores other habits and unchecked days', () => {
+test('bestStreak ignores other habits; one unchecked day is a grace day', () => {
   const days = {
     '2026-10-01': { h1: { done: true }, h2: { done: true } },
     '2026-10-02': { h1: { done: false }, h2: { done: true } },
     '2026-10-03': { h1: { done: true } },
   };
-  assert.equal(DH.bestStreak(days, 'h1'), 1);
+  assert.equal(DH.bestStreak(days, 'h1'), 2); // 10-02 frozen
   assert.equal(DH.bestStreak(days, 'h2'), 2);
 });
 
@@ -63,4 +63,36 @@ test('totalDone counts done days only', () => {
   };
   assert.equal(DH.totalDone(days, 'h1'), 2);
   assert.equal(DH.totalDone(days, 'nope'), 0);
+});
+
+test('grace day: one missed scheduled day per week is forgiven', () => {
+  const days = daysFor(['2026-10-26', '2026-10-27', '2026-10-29', '2026-10-30']);
+  assert.equal(DH.currentStreak(days, 'h1', '2026-10-30'), 4);
+});
+
+test('grace day: a second miss in the same week breaks the streak', () => {
+  const days = daysFor(['2026-10-29', '2026-10-30']);
+  assert.equal(DH.currentStreak(days, 'h1', '2026-10-30'), 2);
+});
+
+test('grace day: misses in different weeks are each forgiven', () => {
+  const days = daysFor(['2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23',
+    '2026-10-25', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30']);
+  assert.equal(DH.currentStreak(days, 'h1', '2026-10-30'), 9);
+});
+
+test('graceUsedThisWeek counts freezes in the current ISO week', () => {
+  const days = daysFor(['2026-10-26', '2026-10-27', '2026-10-29', '2026-10-30']);
+  assert.equal(DH.graceUsedThisWeek(days, 'h1', '2026-10-30'), 1);
+  assert.equal(DH.graceUsedThisWeek(daysFor(['2026-10-29', '2026-10-30']), 'h1', '2026-10-30'), 0);
+});
+
+test('bestStreak bridges a single frozen miss', () => {
+  const days = daysFor(['2026-10-26', '2026-10-27', '2026-10-29', '2026-10-30']);
+  assert.equal(DH.bestStreak(days, 'h1'), 4);
+});
+
+test('bestStreak still breaks on two misses in one week', () => {
+  const days = daysFor(['2026-10-26', '2026-10-27', '2026-10-30']);
+  assert.equal(DH.bestStreak(days, 'h1'), 2);
 });

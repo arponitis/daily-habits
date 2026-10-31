@@ -58,9 +58,16 @@ test('currentStreak skips rest days for weekday schedules', () => {
   assert.equal(DH.currentStreak(days, 'h1', '2026-11-02', WEEKDAYS), 6);
 });
 
-test('currentStreak breaks on a missed scheduled day', () => {
-  // Missed Wednesday 10-28 (no entry); done Thu+Fri.
+test('grace day: currentStreak survives one missed scheduled day per week', () => {
+  // Missed Wednesday 10-28 (no entry); done Mon, Tue, Thu, Fri — Wed is frozen.
   const days = daysFor(['2026-10-26', '2026-10-27', '2026-10-29', '2026-10-30']);
+  assert.equal(DH.currentStreak(days, 'h1', '2026-10-30', WEEKDAYS), 4);
+});
+
+test('currentStreak still breaks on two missed scheduled days in one week', () => {
+  // Done all of last week plus Mon 10-26; missed Tue 10-27 and Wed 10-28; done Thu, Fri.
+  const days = daysFor(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23',
+    '2026-10-26', '2026-10-29', '2026-10-30']);
   assert.equal(DH.currentStreak(days, 'h1', '2026-10-30', WEEKDAYS), 2);
 });
 
