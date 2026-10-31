@@ -1,1 +1,1 @@
-{"description":"A simple, private daily habit tracker.","name":"daily-habits","private":true,"scripts":{"test":"TZ=America/New_York node --test test/dates.test.js test/streak.test.js test/state.test.js"},"version":"1.1.0"}
+{"description":"A simple, private daily habit tracker.","name":"daily-habits","private":true,"scripts":{"test":"TZ=America/New_York node --test test/dates.test.js test/streak.test.js test/state.test.js test/schedule.test.js"},"version":"1.2.0"}

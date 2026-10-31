@@ -16,7 +16,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  var CURRENT_SCHEMA_VERSION = 1;
+  var CURRENT_SCHEMA_VERSION = 2;
 
   function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -43,29 +43,182 @@
     return !!(days && days[key] && days[key][hid] && days[key][hid].done);
   }
 
-  /**
-   * Consecutive done-days ending today (or yesterday if today isn't done yet —
-   * the streak stays alive until the day is over).
+  /* ---------------- schedules ----------------
+   * schedule shapes:
+   *   { type: 'daily' }
+   *   { type: 'weekdays', days: [0..6] }   // 0 = Sunday
+   *   { type: 'timesPerWeek', times: n }
+   * A missing or invalid schedule is treated as daily. Rest days never break
+   * or extend streaks; they are simply skipped.
    */
-  function currentStreak(days, hid, today) {
-    var s = 0;
-    var d = parseKey(today);
-    if (!isDoneIn(days, dayKey(d), hid)) d.setDate(d.getDate() - 1);
-    while (isDoneIn(days, dayKey(d), hid)) { s++; d.setDate(d.getDate() - 1); }
-    return s;
+
+  function normSchedule(habit) {
+    var s = habit && habit.schedule;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return { type: 'daily' };
+    if (s.type === 'weekdays') {
+      var days = Array.isArray(s.days)
+        ? s.days.filter(function (d) { return d >= 0 && d <= 6; })
+        : [];
+      if (!days.length) return { type: 'daily' };
+      return { type: 'weekdays', days: days };
+    }
+    if (s.type === 'timesPerWeek') {
+      return { type: 'timesPerWeek', times: Math.max(1, Math.min(7, Math.floor(Number(s.times) || 1))) };
+    }
+    return { type: 'daily' };
+  }
+
+  /** Is this calendar day a scheduled day for the habit? */
+  function isScheduledDay(schedule, key) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'weekdays') return s.days.indexOf(parseKey(key).getDay()) !== -1;
+    return true; // daily + timesPerWeek: every day is eligible
+  }
+
+  function scheduleLabel(schedule) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'weekdays') {
+      var names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      var ds = s.days.slice().sort(function (a, b) { return a - b; });
+      if (ds.join(',') === '1,2,3,4,5') return 'Mon–Fri';
+      if (ds.join(',') === '0,6') return 'Weekends';
+      return ds.map(function (d) { return names[d]; }).join(' ');
+    }
+    if (s.type === 'timesPerWeek') return s.times + '×/week';
+    return 'Daily';
+  }
+
+  /** ISO week key 'YYYY-Www' (Monday-first). */
+  function isoWeekKey(key) {
+    var d = parseKey(key);
+    var dow = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - dow + 3); // Thursday decides the ISO year/week
+    var jan4 = new Date(d.getFullYear(), 0, 4);
+    var jan4dow = (jan4.getDay() + 6) % 7;
+    jan4.setDate(jan4.getDate() - jan4dow + 3);
+    var week = 1 + Math.round((d - jan4) / 604800000);
+    return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+  }
+
+  /** Monday's day-key for an ISO week key. */
+  function weekStartKey(wkey) {
+    var m = /^(\d{4})-W(\d{2})$/.exec(wkey || '');
+    if (!m) return null;
+    var jan4 = new Date(Number(m[1]), 0, 4);
+    var dow = (jan4.getDay() + 6) % 7;
+    var monday = new Date(jan4.getFullYear(), jan4.getMonth(), jan4.getDate() - dow + (Number(m[2]) - 1) * 7);
+    return dayKey(monday);
+  }
+
+  function addWeeks(wkey, n) {
+    return isoWeekKey(addDays(weekStartKey(wkey), n * 7));
+  }
+
+  function weekDoneCount(days, hid, wkey) {
+    var start = weekStartKey(wkey);
+    if (!start) return 0;
+    var n = 0;
+    for (var i = 0; i < 7; i++) if (isDoneIn(days, addDays(start, i), hid)) n++;
+    return n;
+  }
+
+  function scheduledDaysInWeek(schedule, wkey) {
+    var start = weekStartKey(wkey);
+    if (!start) return 0;
+    var n = 0;
+    for (var i = 0; i < 7; i++) if (isScheduledDay(schedule, addDays(start, i))) n++;
+    return n;
+  }
+
+  /** Previous scheduled day strictly before `key` (searches back up to 8 days). */
+  function prevScheduledDay(schedule, key) {
+    var d = parseKey(key);
+    for (var i = 0; i < 8; i++) {
+      d.setDate(d.getDate() - 1);
+      var k = dayKey(d);
+      if (isScheduledDay(schedule, k)) return k;
+    }
+    return null;
   }
 
   /**
-   * Longest run of consecutive done-days. Compares calendar days, not
-   * millisecond deltas, so DST transitions can't split a streak.
+   * Day-keys in the current streak (for calendar highlighting). timesPerWeek
+   * streaks are week-based and don't map to single days, so they return [].
    */
-  function bestStreak(days, hid) {
+  function streakDays(days, hid, today, schedule) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') return [];
+    var out = [];
+    var d = parseKey(today);
+    var k = dayKey(d);
+    if (isScheduledDay(schedule, k) && !isDoneIn(days, k, hid)) d.setDate(d.getDate() - 1);
+    var guard = 0;
+    for (;;) {
+      k = dayKey(d);
+      if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() - 1); }
+      else if (!isDoneIn(days, k, hid)) break;
+      else { out.push(k); d.setDate(d.getDate() - 1); }
+      if (++guard > 400) break; // safety cap
+    }
+    return out;
+  }
+
+  /**
+   * Consecutive periods ending today (or yesterday if today's period isn't
+   * complete yet — the streak stays alive until the period is over).
+   * For daily/weekdays the period is a scheduled day; for timesPerWeek it is
+   * an ISO week meeting its quota.
+   */
+  function currentStreak(days, hid, today, schedule) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') {
+      var wk = isoWeekKey(today);
+      var n = 0;
+      if (weekDoneCount(days, hid, wk) < s.times) wk = addWeeks(wk, -1);
+      while (weekDoneCount(days, hid, wk) >= s.times) { n++; wk = addWeeks(wk, -1); }
+      return n;
+    }
+    var count = 0;
+    var d = parseKey(today);
+    var k = dayKey(d);
+    if (isScheduledDay(schedule, k) && !isDoneIn(days, k, hid)) d.setDate(d.getDate() - 1);
+    for (;;) {
+      k = dayKey(d);
+      if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() - 1); continue; }
+      if (!isDoneIn(days, k, hid)) break;
+      count++;
+      d.setDate(d.getDate() - 1);
+    }
+    return count;
+  }
+
+  /**
+   * Longest run of consecutive scheduled periods. Compares calendar days, not
+   * millisecond deltas, so DST transitions can't split a streak; rest days
+   * are skipped so a Mon–Fri habit's weekend never breaks the run.
+   */
+  function bestStreak(days, hid, schedule) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') {
+      var keys = Object.keys(days || {}).sort();
+      if (!keys.length) return 0;
+      var wk = isoWeekKey(keys[0]);
+      var end = isoWeekKey(todayKey());
+      var best = 0, cur = 0, guard = 0;
+      while (wk <= end && guard++ < 5200) {
+        if (weekDoneCount(days, hid, wk) >= s.times) { cur++; if (cur > best) best = cur; }
+        else cur = 0;
+        wk = addWeeks(wk, 1);
+      }
+      return best;
+    }
     var best = 0, cur = 0, prev = null;
     var keys = Object.keys(days || {}).sort();
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
+      if (!isScheduledDay(schedule, k)) continue;
       if (!isDoneIn(days, k, hid)) { cur = 0; prev = null; continue; }
-      cur = (prev !== null && addDays(prev, 1) === k) ? cur + 1 : 1;
+      cur = (prev !== null && prevScheduledDay(schedule, k) === prev) ? cur + 1 : 1;
       prev = k;
       if (cur > best) best = cur;
     }
@@ -74,6 +227,28 @@
 
   function totalDone(days, hid) {
     return Object.keys(days || {}).filter(function (k) { return isDoneIn(days, k, hid); }).length;
+  }
+
+  /** Effective weekly target: explicit target, else the timesPerWeek quota, else null. */
+  function weeklyTargetFor(habit) {
+    if (habit && typeof habit.weeklyTarget === 'number' && habit.weeklyTarget > 0) {
+      return Math.floor(habit.weeklyTarget);
+    }
+    var s = normSchedule(habit);
+    if (s.type === 'timesPerWeek') return s.times;
+    return null;
+  }
+
+  /**
+   * This week's progress for a habit: { done, target }. When no explicit
+   * target exists, the target defaults to the number of scheduled days in
+   * the week.
+   */
+  function weekProgress(days, habit, wkey) {
+    var done = weekDoneCount(days, habit.id, wkey);
+    var target = weeklyTargetFor(habit);
+    if (target == null) target = scheduledDaysInWeek(habit.schedule, wkey);
+    return { done: done, target: target };
   }
 
   /**
@@ -94,6 +269,25 @@
         if (typeof h.name !== 'string' || !h.name.trim()) errors.push('habits[' + i + '].name must be a non-empty string');
         if (h.icon != null && typeof h.icon !== 'string') errors.push('habits[' + i + '].icon must be a string');
         if (h.archived != null && typeof h.archived !== 'boolean') errors.push('habits[' + i + '].archived must be a boolean');
+        if (h.description != null && typeof h.description !== 'string') errors.push('habits[' + i + '].description must be a string');
+        if (h.category != null && typeof h.category !== 'string') errors.push('habits[' + i + '].category must be a string');
+        if (h.weeklyTarget != null && typeof h.weeklyTarget !== 'number') errors.push('habits[' + i + '].weeklyTarget must be a number');
+        if (h.schedule != null) {
+          if (typeof h.schedule !== 'object' || Array.isArray(h.schedule)) {
+            errors.push('habits[' + i + '].schedule must be an object');
+          } else {
+            var st = h.schedule.type;
+            if (st !== 'daily' && st !== 'weekdays' && st !== 'timesPerWeek') {
+              errors.push('habits[' + i + '].schedule.type is invalid');
+            }
+            if (st === 'weekdays' && !Array.isArray(h.schedule.days)) {
+              errors.push('habits[' + i + '].schedule.days must be an array');
+            }
+            if (st === 'timesPerWeek' && typeof h.schedule.times !== 'number') {
+              errors.push('habits[' + i + '].schedule.times must be a number');
+            }
+          }
+        }
       });
     }
     if (!data.days || typeof data.days !== 'object' || Array.isArray(data.days)) {
@@ -154,6 +348,20 @@
       });
       s.v = 1;
     }
+    if (v < 2) {
+      // v1 -> v2: flexible schedules + habit metadata (Phase 2). Every habit
+      // gets a normalized schedule plus the new optional fields.
+      s.habits.forEach(function (h) {
+        h.schedule = normSchedule(h);
+        if (typeof h.description !== 'string') h.description = '';
+        if (typeof h.category !== 'string') h.category = '';
+        if (typeof h.weeklyTarget === 'undefined' ||
+            (h.weeklyTarget !== null && typeof h.weeklyTarget !== 'number')) {
+          h.weeklyTarget = null;
+        }
+      });
+      s.v = 2;
+    }
     return s;
   }
 
@@ -168,6 +376,18 @@
     bestStreak: bestStreak,
     totalDone: totalDone,
     validateImport: validateImport,
-    migrateState: migrateState
+    migrateState: migrateState,
+    normSchedule: normSchedule,
+    isScheduledDay: isScheduledDay,
+    scheduleLabel: scheduleLabel,
+    isoWeekKey: isoWeekKey,
+    weekStartKey: weekStartKey,
+    addWeeks: addWeeks,
+    weekDoneCount: weekDoneCount,
+    scheduledDaysInWeek: scheduledDaysInWeek,
+    prevScheduledDay: prevScheduledDay,
+    streakDays: streakDays,
+    weeklyTargetFor: weeklyTargetFor,
+    weekProgress: weekProgress
   };
 });

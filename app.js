@@ -31,7 +31,8 @@ function seedState() {
   return {
     v: DH.CURRENT_SCHEMA_VERSION,
     habits: SEED_HABITS.map(function (h) {
-      return { id: uid(), name: h.name, icon: h.icon, createdAt: Date.now(), archived: false };
+      return { id: uid(), name: h.name, icon: h.icon, createdAt: Date.now(), archived: false,
+               schedule: { type: 'daily' }, description: '', category: '', weeklyTarget: null };
     }),
     days: {}
   };
@@ -68,9 +69,15 @@ var parseKey = DH.parseKey;
 var todayKey = DH.todayKey;
 var addDays = DH.addDays;
 
-function currentStreak(hid) { return DH.currentStreak(state.days, hid, todayKey()); }
-function bestStreak(hid) { return DH.bestStreak(state.days, hid); }
+function currentStreak(hid) { var h = habitById(hid); return DH.currentStreak(state.days, hid, todayKey(), h && h.schedule); }
+function bestStreak(hid) { var h = habitById(hid); return DH.bestStreak(state.days, hid, h && h.schedule); }
 function totalDone(hid) { return DH.totalDone(state.days, hid); }
+
+function habitById(hid) { return state.habits.find(function (x) { return x.id === hid; }); }
+
+/* Phase 2 helpers */
+function isScheduledOn(h, key) { return DH.isScheduledDay(h.schedule, key); }
+function scheduleLabel(h) { return DH.scheduleLabel(h.schedule); }
 
 /* UI state (not persisted) */
 var viewDate  = todayKey();          // YYYY-MM-DD shown in check-in tab
@@ -78,6 +85,10 @@ var viewMonth = viewDate.slice(0, 7); // YYYY-MM shown in calendar tab
 var activeTab = 'checkin';
 var openCard  = null;                // habit id expanded in check-in tab
 var newIcon   = EMOJI_CHOICES[3];    // default icon for the add-habit form
+var newScheduleType = 'daily';       // add-habit form: daily | weekdays | timesPerWeek
+var newWeekdays = [1, 2, 3, 4, 5];   // add-habit form weekday selection
+var activeCat = 'All';               // check-in category filter
+var editingHabit = null;             // habit id with open editor in More tab
 
 function fmtLong(key) {
   return parseKey(key).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -123,13 +134,51 @@ function prune(key, hid) {
 
 /* ---------------- habit management ---------------- */
 
+function newScheduleFromForm() {
+  if (newScheduleType === 'weekdays') {
+    return { type: 'weekdays', days: newWeekdays.slice().sort(function (a, b) { return a - b; }) };
+  }
+  if (newScheduleType === 'timesPerWeek') {
+    var n = parseInt((document.getElementById('newTimes') || {}).value, 10);
+    return { type: 'timesPerWeek', times: Math.max(1, Math.min(7, n || 3)) };
+  }
+  return { type: 'daily' };
+}
+
 function addHabit() {
   var input = document.getElementById('newHabitName');
   var name = (input.value || '').trim();
   if (!name) { input.focus(); return; }
-  state.habits.push({ id: uid(), name: name, icon: newIcon, createdAt: Date.now(), archived: false });
+  var descEl = document.getElementById('newDesc');
+  var catEl = document.getElementById('newCat');
+  state.habits.push({
+    id: uid(), name: name, icon: newIcon, createdAt: Date.now(), archived: false,
+    schedule: DH.normSchedule({ schedule: newScheduleFromForm() }),
+    description: descEl ? descEl.value.trim().slice(0, 80) : '',
+    category: catEl ? catEl.value.trim().slice(0, 24) : '',
+    weeklyTarget: null
+  });
   saveState();
+  // reset the form
+  newScheduleType = 'daily';
+  newWeekdays = [1, 2, 3, 4, 5];
+  newIcon = EMOJI_CHOICES[3];
   render();
+}
+
+function pickSchedType(el, type) {
+  newScheduleType = type;
+  var btns = document.querySelectorAll('#newSchedSeg .seg-btn');
+  for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('sel', btns[i] === el);
+  document.getElementById('newWeekdaysWrap').hidden = type !== 'weekdays';
+  document.getElementById('newTimesWrap').hidden = type !== 'timesPerWeek';
+}
+
+function toggleNewWeekday(el) {
+  var d = Number(el.getAttribute('data-d'));
+  var i = newWeekdays.indexOf(d);
+  if (i === -1) newWeekdays.push(d); else newWeekdays.splice(i, 1);
+  el.classList.toggle('sel', i === -1);
 }
 
 function pickIcon(el, icon) {
@@ -139,11 +188,74 @@ function pickIcon(el, icon) {
   el.classList.add('sel');
 }
 
-function renameHabit(hid) {
-  var h = state.habits.find(function (x) { return x.id === hid; });
+function toggleEditor(hid) { editingHabit = (editingHabit === hid) ? null : hid; render(); }
+
+function toggleEditWeekday(el) { el.classList.toggle('sel'); }
+
+function editSchedChanged(hid) {
+  var st = document.getElementById('edit-sched-' + hid).value;
+  document.getElementById('edit-wdays-' + hid).hidden = st !== 'weekdays';
+  document.getElementById('edit-times-' + hid).hidden = st !== 'timesPerWeek';
+}
+
+function editorHtml(h) {
+  var s = DH.normSchedule(h);
+  var dayBtns = ['S','M','T','W','T','F','S'].map(function (lbl, i) {
+    return '<button type="button" class="day-btn' + (s.days && s.days.indexOf(i) !== -1 ? ' sel' : '') +
+           '" data-d="' + i + '" onclick="toggleEditWeekday(this)">' + lbl + '</button>';
+  }).join('');
+  return '<div class="editor">' +
+    '<div class="field"><label>Name</label>' +
+      '<input id="edit-name-' + h.id + '" class="text-in" maxlength="40" value="' + esc(h.name) + '"></div>' +
+    '<div class="field"><label>Description</label>' +
+      '<input id="edit-desc-' + h.id + '" class="text-in" maxlength="80" value="' + esc(h.description || '') + '"></div>' +
+    '<div class="field"><label>Category</label>' +
+      '<input id="edit-cat-' + h.id + '" class="text-in" maxlength="24" value="' + esc(h.category || '') + '"></div>' +
+    '<div class="field"><label>Schedule</label>' +
+      '<select id="edit-sched-' + h.id + '" class="text-in" onchange="editSchedChanged(\'' + h.id + '\')">' +
+        '<option value="daily"' + (s.type === 'daily' ? ' selected' : '') + '>Daily</option>' +
+        '<option value="weekdays"' + (s.type === 'weekdays' ? ' selected' : '') + '>Specific days</option>' +
+        '<option value="timesPerWeek"' + (s.type === 'timesPerWeek' ? ' selected' : '') + '>Times per week</option>' +
+      '</select></div>' +
+    '<div class="field" id="edit-wdays-' + h.id + '"' + (s.type === 'weekdays' ? '' : ' hidden') + '>' +
+      '<label>Which days</label><div class="day-pick">' + dayBtns + '</div></div>' +
+    '<div class="field" id="edit-times-' + h.id + '"' + (s.type === 'timesPerWeek' ? '' : ' hidden') + '>' +
+      '<label>Times per week</label>' +
+      '<input id="edit-times-in-' + h.id + '" type="number" min="1" max="7" class="text-in" value="' + (s.times || 3) + '"></div>' +
+    '<div class="field"><label>Weekly target <span class="opt">(optional)</span></label>' +
+      '<input id="edit-target-' + h.id + '" type="number" min="1" max="21" class="text-in" ' +
+        'placeholder="defaults to scheduled days" value="' + (h.weeklyTarget || '') + '"></div>' +
+    '<div class="btn-row"><button type="button" class="btn" onclick="saveHabitEdit(\'' + h.id + '\')">Save</button>' +
+    '<button type="button" class="btn ghost" onclick="toggleEditor(\'' + h.id + '\')">Cancel</button></div>' +
+  '</div>';
+}
+
+function saveHabitEdit(hid) {
+  var h = habitById(hid);
   if (!h) return;
-  var name = prompt('Rename habit', h.name);
-  if (name && name.trim()) { h.name = name.trim(); saveState(); render(); }
+  var val = function (id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  var name = val('edit-name-' + hid).trim();
+  if (name) h.name = name.slice(0, 40);
+  h.description = val('edit-desc-' + hid).trim().slice(0, 80);
+  h.category = val('edit-cat-' + hid).trim().slice(0, 24);
+  var st = val('edit-sched-' + hid);
+  if (st === 'weekdays') {
+    var days = [];
+    var btns = document.querySelectorAll('#edit-wdays-' + hid + ' .day-btn.sel');
+    for (var i = 0; i < btns.length; i++) days.push(Number(btns[i].getAttribute('data-d')));
+    h.schedule = { type: 'weekdays', days: days };
+  } else if (st === 'timesPerWeek') {
+    var n = parseInt(val('edit-times-in-' + hid), 10);
+    h.schedule = { type: 'timesPerWeek', times: Math.max(1, Math.min(7, n || 3)) };
+  } else {
+    h.schedule = { type: 'daily' };
+  }
+  h.schedule = DH.normSchedule(h);
+  var t = parseInt(val('edit-target-' + hid), 10);
+  h.weeklyTarget = (t > 0) ? Math.min(21, t) : null;
+  editingHabit = null;
+  saveState();
+  render();
 }
 
 function toggleArchive(hid) {
@@ -242,10 +354,13 @@ function ring(pct, label) {
 function renderHeader() {
   var habits = activeHabits();
   var key = todayKey();
-  var done = habits.filter(function (h) { return isDone(key, h.id); }).length;
+  // The ring tracks scheduled-today habits; rest-day habits are extra credit.
+  var sched = habits.filter(function (h) { return isScheduledOn(h, key); });
+  var list = sched.length ? sched : habits;
+  var done = list.filter(function (h) { return isDone(key, h.id); }).length;
   document.getElementById('dateLine').textContent =
     new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  document.getElementById('dayRing').innerHTML = ring(habits.length ? done / habits.length : 0, done + '/' + habits.length);
+  document.getElementById('dayRing').innerHTML = ring(list.length ? done / list.length : 0, done + '/' + list.length);
 }
 
 function weekStrip(key, hid) {
@@ -265,11 +380,18 @@ function habitCard(h, key) {
   var e = dayEntry(key, h.id);
   var open = openCard === h.id;
   var note = e && e.note ? e.note : '';
-  var html = '<div class="habit' + (done ? ' done' : '') + '">' +
+  var scheduled = isScheduledOn(h, key);
+  var streakUnit = DH.normSchedule(h).type === 'timesPerWeek' ? 'wk' : 'day';
+  var sub = scheduled
+    ? '🔥 ' + currentStreak(h.id) + '-' + streakUnit + ' streak · ' + esc(scheduleLabel(h))
+    : 'Rest day · ' + esc(scheduleLabel(h));
+  if (h.category) sub += ' · ' + esc(h.category);
+  var wp = DH.weekProgress(state.days, h, DH.isoWeekKey(key));
+  var html = '<div class="habit' + (done ? ' done' : '') + (scheduled ? '' : ' rest') + '">' +
     '<div class="habit-row" onclick="toggleCard(\'' + h.id + '\')">' +
       '<div class="habit-ico">' + esc(h.icon) + '</div>' +
       '<div class="habit-meta"><div class="habit-name">' + esc(h.name) + '</div>' +
-      '<div class="habit-sub">🔥 ' + currentStreak(h.id) + '-day streak</div></div>' +
+      '<div class="habit-sub">' + sub + '</div></div>' +
       '<button type="button" class="check' + (done ? ' on' : '') + '" ' +
         'onclick="event.stopPropagation();toggleDone(\'' + h.id + '\')" aria-label="Toggle ' + esc(h.name) + '">✓</button>' +
     '</div>';
@@ -280,6 +402,9 @@ function habitCard(h, key) {
         '<div class="stat"><b>' + bestStreak(h.id) + '</b><span>Best</span></div>' +
         '<div class="stat"><b>' + totalDone(h.id) + '</b><span>Total</span></div>' +
       '</div>' +
+      '<div class="sched-line">' + esc(scheduleLabel(h)) +
+        (h.description ? ' · ' + esc(h.description) : '') +
+        ' · This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
       weekStrip(key, h.id) +
       '<textarea class="note" placeholder="Add a note for this day…" ' +
         'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea>' +
@@ -287,6 +412,8 @@ function habitCard(h, key) {
   }
   return html + '</div>';
 }
+
+function setCat(c) { activeCat = c; render(); }
 
 function renderCheckin() {
   var key = viewDate;
@@ -301,12 +428,99 @@ function renderCheckin() {
     '<button type="button" class="navbtn" onclick="moveDay(1)" ' + (isToday ? 'disabled' : '') + ' aria-label="Next day">›</button>' +
   '</div>';
 
+  // category filter chips
+  var cats = [];
+  habits.forEach(function (h) {
+    var c = (h.category || '').trim();
+    if (c && cats.indexOf(c) === -1) cats.push(c);
+  });
+  if (cats.length) {
+    html += '<div class="chips"><button type="button" class="chip' + (activeCat === 'All' ? ' sel' : '') +
+            '" onclick="setCat(\'All\')">All</button>' +
+      cats.map(function (c) {
+        return '<button type="button" class="chip' + (activeCat === c ? ' sel' : '') +
+               '" data-c="' + esc(c) + '" onclick="setCat(this.getAttribute(\'data-c\'))">' + esc(c) + '</button>';
+      }).join('') + '</div>';
+    if (activeCat !== 'All') {
+      habits = habits.filter(function (h) { return (h.category || '').trim() === activeCat; });
+    }
+  }
+
   if (!habits.length) {
-    html += '<div class="empty"><div class="big">🌱</div><div>No habits yet.<br>Add your first one in the More tab.</div></div>';
+    html += '<div class="empty"><div class="big">🌱</div><div>' +
+      (activeHabits().length ? 'No habits in this category.' : 'No habits yet.<br>Add your first one in the More tab.') +
+      '</div></div>';
   } else {
+    // scheduled first, incomplete before done, rest days last
+    habits = habits.slice().sort(function (a, b) {
+      var sa = isScheduledOn(a, key) ? 0 : 1;
+      var sb = isScheduledOn(b, key) ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      return (isDone(key, a.id) ? 1 : 0) - (isDone(key, b.id) ? 1 : 0);
+    });
     html += habits.map(function (h) { return habitCard(h, key); }).join('');
   }
   document.getElementById('view').innerHTML = html;
+}
+
+function weekLabel(wkey, isCurrent) {
+  if (isCurrent) return 'This wk';
+  return parseKey(DH.weekStartKey(wkey)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderStats() {
+  var habits = activeHabits();
+  var today = todayKey();
+  var curWeek = DH.isoWeekKey(today);
+  var html = '';
+  if (!habits.length) {
+    html += '<div class="empty"><div class="big">📊</div><div>No habits yet.<br>Add your first one in the More tab.</div></div>';
+  } else {
+    var tDone = 0, tTotal = 0;
+    var rows = habits.map(function (h) {
+      var wp = DH.weekProgress(state.days, h, curWeek);
+      tDone += Math.min(wp.done, wp.target);
+      tTotal += wp.target;
+      var weeks = [];
+      for (var i = 3; i >= 0; i--) {
+        var wk = DH.addWeeks(curWeek, -i);
+        var wpr = DH.weekProgress(state.days, h, wk);
+        weeks.push({ label: weekLabel(wk, i === 0), done: wpr.done, target: wpr.target });
+      }
+      return { h: h, wp: wp, weeks: weeks };
+    });
+    html += '<div class="card stats-top"><div><h2>This week</h2>' +
+      '<p class="hint">' + tDone + ' of ' + tTotal + ' scheduled check-ins</p></div>' +
+      '<div class="ring-wrap">' + ring(tTotal ? tDone / tTotal : 0, tDone + '/' + tTotal) + '</div></div>';
+    rows.forEach(function (r) {
+      var pct = r.wp.target ? Math.round(100 * Math.min(r.wp.done, r.wp.target) / r.wp.target) : 0;
+      html += '<div class="card"><div class="srow-head"><span>' + esc(r.h.icon) + ' <b>' + esc(r.h.name) + '</b></span>' +
+        '<span class="srow-num">' + r.wp.done + '/' + r.wp.target + '</span></div>' +
+        '<div class="bar"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="wk4">' + r.weeks.map(function (w) {
+          var wpct = w.target ? Math.round(100 * Math.min(w.done, w.target) / w.target) : 0;
+          return '<div class="wk"><div class="bar mini-bar"><div class="bar-fill" style="width:' + wpct + '%"></div></div>' +
+                 '<div class="wk-l">' + esc(w.label) + '</div><div class="wk-n">' + w.done + '/' + w.target + '</div></div>';
+        }).join('') + '</div></div>';
+    });
+  }
+  document.getElementById('view').innerHTML = html;
+}
+
+function monthSummary(y, m, habits, today) {
+  var done = 0, total = 0;
+  var dim = new Date(y, m + 1, 0).getDate();
+  for (var d = 1; d <= dim; d++) {
+    var k = dayKey(new Date(y, m, d));
+    if (k > today) break;
+    for (var i = 0; i < habits.length; i++) {
+      if (DH.isScheduledDay(habits[i].schedule, k)) {
+        total++;
+        if (isDone(k, habits[i].id)) done++;
+      }
+    }
+  }
+  return { done: done, total: total };
 }
 
 function renderCalendar() {
@@ -320,8 +534,15 @@ function renderCalendar() {
 
   var html = '<div class="cal-head">' +
     '<button type="button" class="navbtn" onclick="moveMonth(-1)" aria-label="Previous month">‹</button>' +
-    '<b>' + first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) + '</b>' +
+    '<div style="text-align:center"><b>' + first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) + '</b>' +
+    '<div><button type="button" class="today-pill" onclick="goToday()">Today</button></div></div>' +
     '<button type="button" class="navbtn" onclick="moveMonth(1)" aria-label="Next month">›</button></div>';
+
+  // highlight days that belong to any habit's current streak
+  var streakSet = {};
+  habits.forEach(function (h) {
+    DH.streakDays(state.days, h.id, today, h.schedule).forEach(function (k) { streakSet[k] = true; });
+  });
 
   html += '<div class="cal-grid">';
   ['M','T','W','T','F','S','S'].forEach(function (d) { html += '<div class="cal-dow">' + d + '</div>'; });
@@ -335,13 +556,16 @@ function renderCalendar() {
     if (!dt) { html += '<div></div>'; return; }
     var k = dayKey(dt);
     var doneCount = habits.filter(function (h) { return isDone(k, h.id); }).length;
-    var cls = 'cal-day' + (k === viewDate ? ' sel' : '') + (k > today ? ' future' : '');
+    var cls = 'cal-day' + (k === viewDate ? ' sel' : '') + (k > today ? ' future' : '') + (streakSet[k] ? ' streak' : '');
     var dots = '';
     for (var j = 0; j < Math.min(doneCount, 3); j++) dots += '<i></i>';
     html += '<button type="button" class="' + cls + '" onclick="pickDay(\'' + k + '\')">' +
             dt.getDate() + '<span class="dots">' + dots + '</span></button>';
   });
   html += '</div>';
+
+  var ms = monthSummary(y, m, habits, today);
+  html += '<div class="month-sum">' + ms.done + ' of ' + ms.total + ' scheduled check-ins this month</div>';
 
   // selected day detail
   html += '<div class="day-detail"><h3>' +
@@ -359,7 +583,7 @@ function renderCalendar() {
 }
 
 function renderMore() {
-  var html = '<div class="card"><h2>Add a habit</h2><p class="hint">Small, daily, checkable. That\'s the whole trick.</p>' +
+  var html = '<div class="card"><h2>Add a habit</h2><p class="hint">Small, checkable, on your schedule.</p>' +
     '<div class="field"><label for="newHabitName">Name</label>' +
     '<input id="newHabitName" class="text-in" maxlength="40" placeholder="e.g. Read 20 pages" autocomplete="off"></div>' +
     '<div class="field"><label>Icon</label><div class="emoji-row">' +
@@ -367,6 +591,22 @@ function renderMore() {
       return '<button type="button" class="emoji-pick' + (e === newIcon ? ' sel' : '') +
              '" onclick="pickIcon(this,\'' + e + '\')">' + e + '</button>';
     }).join('') + '</div></div>' +
+    '<div class="field"><label>Schedule</label><div class="seg" id="newSchedSeg">' +
+      '<button type="button" class="seg-btn sel" onclick="pickSchedType(this,\'daily\')">Daily</button>' +
+      '<button type="button" class="seg-btn" onclick="pickSchedType(this,\'weekdays\')">Days</button>' +
+      '<button type="button" class="seg-btn" onclick="pickSchedType(this,\'timesPerWeek\')">×/week</button>' +
+    '</div></div>' +
+    '<div class="field" id="newWeekdaysWrap" hidden><label>Which days</label><div class="day-pick">' +
+      ['S','M','T','W','T','F','S'].map(function (lbl, i) {
+        return '<button type="button" class="day-btn' + (newWeekdays.indexOf(i) !== -1 ? ' sel' : '') +
+               '" data-d="' + i + '" onclick="toggleNewWeekday(this)">' + lbl + '</button>';
+      }).join('') + '</div></div>' +
+    '<div class="field" id="newTimesWrap" hidden><label for="newTimes">Times per week</label>' +
+      '<input id="newTimes" type="number" min="1" max="7" value="3" class="text-in"></div>' +
+    '<div class="field"><label for="newDesc">Description <span class="opt">(optional)</span></label>' +
+      '<input id="newDesc" class="text-in" maxlength="80" placeholder="e.g. 20 pages before bed" autocomplete="off"></div>' +
+    '<div class="field"><label for="newCat">Category <span class="opt">(optional)</span></label>' +
+      '<input id="newCat" class="text-in" maxlength="24" placeholder="e.g. Health" autocomplete="off"></div>' +
     '<button type="button" class="btn" onclick="addHabit()">Add habit</button></div>';
 
   html += '<div class="card"><h2>Your habits</h2><p class="hint">Archived habits keep their history but leave the daily list.</p>';
@@ -374,12 +614,16 @@ function renderMore() {
     html += '<p class="hint">None yet.</p>';
   } else {
     html += state.habits.map(function (h) {
-      return '<div class="manage-row"><div class="m-ico">' + esc(h.icon) + '</div>' +
-        '<div class="m-name">' + esc(h.name) +
-        (h.archived ? ' <small>archived</small>' : ' <small>🔥 ' + currentStreak(h.id) + ' day streak</small>') + '</div>' +
-        '<button type="button" class="mini" onclick="renameHabit(\'' + h.id + '\')">Rename</button>' +
+      var sub = h.archived ? 'archived'
+        : '🔥 ' + currentStreak(h.id) + ' · ' + esc(scheduleLabel(h)) +
+          (h.category ? ' · ' + esc(h.category) : '');
+      var row = '<div class="manage-row"><div class="m-ico">' + esc(h.icon) + '</div>' +
+        '<div class="m-name">' + esc(h.name) + ' <small>' + sub + '</small></div>' +
+        '<button type="button" class="mini" onclick="toggleEditor(\'' + h.id + '\')">Edit</button>' +
         '<button type="button" class="mini" onclick="toggleArchive(\'' + h.id + '\')">' + (h.archived ? 'Unarchive' : 'Archive') + '</button>' +
         '<button type="button" class="mini danger" onclick="deleteHabit(\'' + h.id + '\')">Delete</button></div>';
+      if (editingHabit === h.id) row += editorHtml(h);
+      return row;
     }).join('');
   }
   html += '</div>';
@@ -390,7 +634,7 @@ function renderMore() {
     '<div style="height:10px"></div>' +
     '<button type="button" class="btn danger" onclick="wipeData()">Delete all data</button></div>';
 
-  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.1 — check in once a day, watch the streaks grow. ' +
+  html += '<div class="card"><h2>About</h2><p class="hint">Daily Habits v1.2 — check in once a day, watch the streaks grow. ' +
     'Add to your home screen for the full app feel.</p></div>';
 
   document.getElementById('view').innerHTML = html;
@@ -404,6 +648,7 @@ function render() {
   }
   if (activeTab === 'checkin') renderCheckin();
   else if (activeTab === 'calendar') renderCalendar();
+  else if (activeTab === 'stats') renderStats();
   else renderMore();
   window.scrollTo(0, 0);
 }
@@ -442,7 +687,7 @@ function hideToast() {
 }
 
 function habitName(hid) {
-  var h = state.habits.find(function (x) { return x.id === hid; });
+  var h = habitById(hid);
   return h ? h.name : 'Habit';
 }
 
