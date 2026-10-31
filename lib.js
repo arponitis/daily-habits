@@ -225,6 +225,62 @@
   }
 
   /**
+   * Frozen (grace) days in a date range, via the same backward walk as the
+   * streak: one missed scheduled day per ISO week is forgiven. Returns a
+   * { dayKey: true } map. Used by the heatmap.
+   */
+  function frozenDaysInRange(days, hid, schedule, fromKey, toKey) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') return {};
+    var frozen = {}, frozenWeeks = {};
+    var d = parseKey(toKey), end = parseKey(fromKey);
+    var guard = 0;
+    while (dayKey(d) >= dayKey(end) && guard++ < 500) {
+      var k = dayKey(d);
+      if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() - 1); continue; }
+      if (!isDoneIn(days, k, hid)) {
+        var wk = isoWeekKey(k);
+        if (!frozenWeeks[wk]) { frozenWeeks[wk] = true; frozen[k] = true; }
+      }
+      d.setDate(d.getDate() - 1);
+    }
+    return frozen;
+  }
+
+  /**
+   * GitHub-style heatmap data: `weeks` columns (oldest first) of 7
+   * Monday-first day cells, ending with the week containing endKey.
+   * Each cell is { key, state } with state 'done' | 'frozen' | 'missed' |
+   * 'off' (unscheduled) | 'future'.
+   */
+  function heatmapData(days, hid, schedule, endKey, weeks) {
+    var endMonday = weekStartKey(isoWeekKey(endKey));
+    var startMonday = addDays(endMonday, -(weeks - 1) * 7);
+    // The final column runs to Sunday of endKey's week, which can be after endKey;
+    // clamp to today since future days can't be frozen.
+    var lastDay = addDays(startMonday, weeks * 7 - 1);
+    if (lastDay > today) lastDay = today;
+    var frozen = frozenDaysInRange(days, hid, schedule, startMonday, lastDay);
+    var today = todayKey();
+    var cols = [];
+    for (var w = 0; w < weeks; w++) {
+      var col = [];
+      for (var i = 0; i < 7; i++) {
+        var k = addDays(startMonday, w * 7 + i);
+        var state;
+        if (k > today) state = 'future';
+        else if (isDoneIn(days, k, hid)) state = 'done';
+        else if (frozen[k]) state = 'frozen';
+        else if (isScheduledDay(schedule, k)) state = 'missed';
+        else state = 'off';
+        col.push({ key: k, state: state });
+      }
+      cols.push(col);
+    }
+    return cols;
+  }
+
+  /**
    * Longest run of consecutive scheduled periods. Compares calendar days, not
    * millisecond deltas, so DST transitions can't split a streak; rest days
    * are skipped so a Mon–Fri habit's weekend never breaks the run. One
@@ -626,6 +682,8 @@
     currentStreak: currentStreak,
     bestStreak: bestStreak,
     graceUsedThisWeek: graceUsedThisWeek,
+    frozenDaysInRange: frozenDaysInRange,
+    heatmapData: heatmapData,
     totalDone: totalDone,
     validateImport: validateImport,
     migrateState: migrateState,
