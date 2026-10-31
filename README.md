@@ -27,6 +27,12 @@ Your check-ins stay on the device — each browser keeps its own data.
 - Daily reminders (local notifications while the app is open)
 - Dark mode (Auto / Light / Dark, follows the OS)
 - Offline support via service worker — install it and it works with no network
+- Diagnostics card (version, service worker status, storage, error log) in More
+
+## Landing page
+
+[landing.html](https://arponitis.github.io/daily-habits/landing.html) — product page with
+install instructions for iPhone and Android.
 - Last-7-days strip and a month calendar with backfill, streak highlights, and month summaries
 - Habit descriptions and categories with filtering
 - Per-day notes (e.g. what chapter you read)
