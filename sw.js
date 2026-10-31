@@ -1,7 +1,7 @@
 /* Daily Habits service worker — offline app-shell cache.
    First visit caches the shell; afterwards the app loads with no network. */
 
-var CACHE = 'daily-habits-v2';
+var CACHE = 'daily-habits-v3';
 var ASSETS = [
   './',
   './index.html',
