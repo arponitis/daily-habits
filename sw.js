@@ -9,6 +9,7 @@ var ASSETS = [
   './app.js',
   './lib.js',
   './db.js',
+  './sync.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
