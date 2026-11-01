@@ -645,7 +645,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.7.0';
+var APP_VERSION = '1.10.0';
 
 function logError(msg, src) {
   try {
@@ -1143,7 +1143,6 @@ function render() {
     if (sh) document.getElementById('view').innerHTML += sheetHtml(sh, viewDate);
     else sheetHabit = null;
   }
-  window.scrollTo(0, 0);
 }
 
 /* ---------------- UI actions (called from inline handlers) ---------------- */
@@ -1242,7 +1241,7 @@ function pickDay(k) {
   render();
 }
 
-function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); }
+function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); window.scrollTo(0, 0); }
 
 /* ---------------- boot ---------------- */
 
@@ -1344,5 +1343,6 @@ async function boot() {
 
   saveState(); // persist seed on first run
   render();
+
 }
 boot();
