@@ -384,6 +384,10 @@ select.text-in { appearance: auto; }
 .hm-cell.hm-future { opacity: .1; }
 [data-theme="dark"] .hm-cell.hm-frozen { background: #7cb3ff; }
 
+/* Trends (Phase C) */
+.trend-l{font-size:12px;opacity:.55;margin:10px 0 4px}
+.spark{display:flex;align-items:flex-end;gap:3px;height:34px}
+.spark-bar{flex:1;min-width:3px;background:var(--accent);border-radius:2px;opacity:.8}
 /* Habit templates (Phase C) */
 .tpl-head{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:10px 2px;cursor:pointer;text-align:left;color:inherit;font:inherit}
 .tpl-head .m-name{flex:1}
