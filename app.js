@@ -72,6 +72,7 @@ var newScheduleType = 'daily';       // add-habit form: daily | weekdays | times
 var newWeekdays = [1, 2, 3, 4, 5];   // add-habit form weekday selection
 var activeCat = 'All';               // check-in category filter
 var editingHabit = null;             // habit id with open editor in More tab
+var expandedTemplate = null;         // template id expanded in the Templates card
 
 function fmtLong(key) {
   return parseKey(key).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -354,6 +355,46 @@ function handleEncryptedImport(input) {
     })();
   };
   r.readAsText(f);
+}
+
+/* ---------------- habit templates (Phase C) ---------------- */
+
+function templatesCardHtml() {
+  var html = '<div class="card"><h2>Templates</h2><p class="hint">One-tap starter packs — pick the habits you want.</p>';
+  html += DH.listTemplates().map(function (t) {
+    var open = expandedTemplate === t.id;
+    var head = '<button type="button" class="tpl-head" onclick="toggleTemplate(\'' + t.id + '\')" aria-expanded="' + open + '">' +
+      '<span class="m-ico">' + esc(t.icon) + '</span>' +
+      '<span class="m-name">' + esc(t.name) + ' <small>' + t.habitCount + ' habits · ' + esc(t.blurb) + '</small></span>' +
+      '<span class="tpl-caret">' + (open ? '▾' : '▸') + '</span></button>';
+    var body = '';
+    if (open) {
+      body = '<div class="tpl-body">' + t.habits.map(function (h, i) {
+        return '<label class="tpl-row"><input type="checkbox" data-tpl="' + t.id + '" value="' + i + '" checked> ' +
+          '<span class="m-ico">' + esc(h.icon) + '</span><span>' + esc(h.name) +
+          ' <small>' + esc(DH.scheduleLabel(h.schedule)) + '</small></span></label>';
+      }).join('') +
+      '<div class="btn-row"><button type="button" class="btn ghost" onclick="applyTemplate(\'' + t.id + '\')">Add selected</button></div></div>';
+    }
+    return '<div class="tpl">' + head + body + '</div>';
+  }).join('');
+  return html + '</div>';
+}
+
+function toggleTemplate(id) { expandedTemplate = expandedTemplate === id ? null : id; render(); }
+
+function applyTemplate(id) {
+  var boxes = document.querySelectorAll('input[data-tpl="' + id + '"]:checked');
+  var idx = [];
+  for (var i = 0; i < boxes.length; i++) idx.push(parseInt(boxes[i].value, 10));
+  if (!idx.length) { showToast('Select at least one habit.'); return; }
+  var habits = DH.instantiateTemplate(id, idx, state.habits.map(function (h) { return h.id; }), Date.now());
+  if (!habits || !habits.length) return;
+  habits.forEach(function (h) { state.habits.push(h); });
+  saveState();
+  expandedTemplate = null;
+  showToast('Added ' + habits.length + ' habit' + (habits.length === 1 ? '' : 's') + ' 🎉');
+  render();
 }
 
 /* ---------------- share ---------------- */
@@ -1064,9 +1105,11 @@ function renderMore() {
       '<input id="newCat" class="text-in" maxlength="24" placeholder="e.g. Health" autocomplete="off"></div>' +
     '<button type="button" class="btn" onclick="addHabit()">Add habit</button></div>';
 
+  html += templatesCardHtml();
+
   html += '<div class="card"><h2>Your habits</h2><p class="hint">Archived habits keep their history but leave the daily list.</p>';
   if (!state.habits.length) {
-    html += '<p class="hint">None yet.</p>';
+    html += '<p class="hint">None yet — try a starter pack in Templates above.</p>';
   } else {
     html += state.habits.map(function (h) {
       var sub = h.archived ? 'archived'
