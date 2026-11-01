@@ -645,7 +645,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.7.0';
+var APP_VERSION = '1.10.0';
 
 function logError(msg, src) {
   try {
@@ -915,6 +915,14 @@ function renderStats() {
     html += insightsHtml(DH.insights(state.days, habits, today));
     rows.forEach(function (r) {
       var pct = r.wp.target ? Math.round(100 * Math.min(r.wp.done, r.wp.target) / r.wp.target) : 0;
+      var rates = DH.weeklyRates(state.days, r.h.id, r.h.schedule, today, 12);
+      var spark = '<div class="trend-l">12-week trend</div><div class="spark">' + rates.map(function (w) {
+        var h = w.rate == null ? 0 : Math.round(w.rate * 100);
+        return '<div class="spark-bar" style="height:' + Math.max(h, 5) + '%" title="' + w.done + '/' + w.scheduled + '"></div>';
+      }).join('') + '</div>';
+      var bw = DH.bestWeekday(state.days, r.h.id, r.h.schedule, today, 12);
+      if (bw) spark += '<p class="hint">Strongest day: <b>' + esc(DOW_NAMES[bw.weekday]) + '</b> — ' +
+        Math.round(bw.rate * 100) + '% over the last ' + bw.n + ' ' + esc(DOW_NAMES[bw.weekday]) + 's</p>';
       html += '<div class="card"><div class="srow-head"><span>' + esc(r.h.icon) + ' <b>' + esc(r.h.name) + '</b></span>' +
         '<span class="srow-num">' + r.wp.done + '/' + r.wp.target + '</span></div>' +
         '<div class="bar"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
@@ -922,7 +930,7 @@ function renderStats() {
           var wpct = w.target ? Math.round(100 * Math.min(w.done, w.target) / w.target) : 0;
           return '<div class="wk"><div class="bar mini-bar"><div class="bar-fill" style="width:' + wpct + '%"></div></div>' +
                  '<div class="wk-l">' + esc(w.label) + '</div><div class="wk-n">' + w.done + '/' + w.target + '</div></div>';
-        }).join('') + '</div></div>';
+        }).join('') + '</div>' + spark + '</div>';
     });
   }
   document.getElementById('view').innerHTML = html;
@@ -1344,5 +1352,6 @@ async function boot() {
 
   saveState(); // persist seed on first run
   render();
+
 }
 boot();
