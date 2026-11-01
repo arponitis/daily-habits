@@ -350,6 +350,17 @@ select.text-in { appearance: auto; }
 .welcome h2 { margin: 8px 0 4px; font-size: 19px; }
 .w-steps { display: grid; gap: 8px; text-align: left; margin: 12px 0 16px; font-size: 14.5px; }
 .w-steps b { color: var(--accent); margin-right: 6px; }
+/* Onboarding choice card (#60) */
+.ob-choices { display: grid; gap: 10px; margin-top: 14px; text-align: left; }
+.ob-choice { display: flex; align-items: center; gap: 12px; width: 100%; background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.ob-choice:active { transform: scale(.98); border-color: var(--accent); }
+.ob-ico { font-size: 26px; flex: none; }
+.ob-txt b { display: block; font-size: 15px; }
+.ob-txt small { opacity: .6; font-size: 12.5px; }
+/* First-run tip card */
+.card.tip { position: relative; border: 1.5px solid var(--accent-soft); padding-right: 44px; }
+.card.tip p { margin: 0; font-size: 14px; }
+.tip-x { position: absolute; top: 8px; right: 10px; background: none; border: 0; font-size: 20px; color: inherit; opacity: .5; cursor: pointer; padding: 4px 8px; }
 
 /* ---------- phase 4: distributable ---------- */
 
@@ -384,10 +395,6 @@ select.text-in { appearance: auto; }
 .hm-cell.hm-future { opacity: .1; }
 [data-theme="dark"] .hm-cell.hm-frozen { background: #7cb3ff; }
 
-/* Trends (Phase C) */
-.trend-l{font-size:12px;opacity:.55;margin:10px 0 4px}
-.spark{display:flex;align-items:flex-end;gap:3px;height:34px}
-.spark-bar{flex:1;min-width:3px;background:var(--accent);border-radius:2px;opacity:.8}
 /* Habit templates (Phase C) */
 .tpl-head{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:10px 2px;cursor:pointer;text-align:left;color:inherit;font:inherit}
 .tpl-head .m-name{flex:1}
