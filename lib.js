@@ -164,6 +164,38 @@
   }
 
   /**
+   * Shared walk for streaks with the weekly grace day: one missed scheduled
+   * day per ISO week is forgiven (frozen) instead of breaking the streak.
+   * Returns { count, frozen } where frozen maps dayKeys to true - but only
+   * for freezes that actually saved the streak, i.e. that bridge to an
+   * older done day. timesPerWeek habits don't need this - their quota is
+   * already forgiving.
+   */
+  function streakWalk(days, hid, today, schedule) {
+    var events = []; // newest-first: { k, done }
+    var frozenWeeks = {};
+    var d = parseKey(today);
+    var k = dayKey(d);
+    if (isScheduledDay(schedule, k) && !isDoneIn(days, k, hid)) d.setDate(d.getDate() - 1);
+    var guard = 0;
+    for (;;) {
+      if (guard++ > 400) break; // safety cap
+      k = dayKey(d);
+      if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() - 1); continue; }
+      if (isDoneIn(days, k, hid)) { events.push({ k: k, done: true }); d.setDate(d.getDate() - 1); continue; }
+      var wk = isoWeekKey(k);
+      if (!frozenWeeks[wk]) { frozenWeeks[wk] = true; events.push({ k: k, done: false }); d.setDate(d.getDate() - 1); continue; }
+      break;
+    }
+    var count = 0, frozen = {}, seenOlderDone = false;
+    for (var i = events.length - 1; i >= 0; i--) {
+      if (events[i].done) { count++; seenOlderDone = true; }
+      else if (seenOlderDone) frozen[events[i].k] = true;
+    }
+    return { count: count, frozen: frozen };
+  }
+
+  /**
    * Consecutive periods ending today (or yesterday if today's period isn't
    * complete yet — the streak stays alive until the period is over).
    * For daily/weekdays the period is a scheduled day; for timesPerWeek it is
@@ -178,24 +210,81 @@
       while (weekDoneCount(days, hid, wk) >= s.times) { n++; wk = addWeeks(wk, -1); }
       return n;
     }
-    var count = 0;
-    var d = parseKey(today);
-    var k = dayKey(d);
-    if (isScheduledDay(schedule, k) && !isDoneIn(days, k, hid)) d.setDate(d.getDate() - 1);
-    for (;;) {
-      k = dayKey(d);
+    return streakWalk(days, hid, today, schedule).count;
+  }
+
+  /** Number of grace days consumed in the ISO week containing `today`. */
+  function graceUsedThisWeek(days, hid, today, schedule) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') return 0;
+    var wk = isoWeekKey(today);
+    var frozen = streakWalk(days, hid, today, schedule).frozen;
+    var n = 0;
+    Object.keys(frozen).forEach(function (k) { if (isoWeekKey(k) === wk) n++; });
+    return n;
+  }
+
+  /**
+   * Frozen (grace) days in a date range, via the same backward walk as the
+   * streak: one missed scheduled day per ISO week is forgiven. Returns a
+   * { dayKey: true } map. Used by the heatmap.
+   */
+  function frozenDaysInRange(days, hid, schedule, fromKey, toKey) {
+    var s = normSchedule({ schedule: schedule });
+    if (s.type === 'timesPerWeek') return {};
+    var frozen = {}, frozenWeeks = {};
+    var d = parseKey(toKey), end = parseKey(fromKey);
+    var guard = 0;
+    while (dayKey(d) >= dayKey(end) && guard++ < 500) {
+      var k = dayKey(d);
       if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() - 1); continue; }
-      if (!isDoneIn(days, k, hid)) break;
-      count++;
+      if (!isDoneIn(days, k, hid)) {
+        var wk = isoWeekKey(k);
+        if (!frozenWeeks[wk]) { frozenWeeks[wk] = true; frozen[k] = true; }
+      }
       d.setDate(d.getDate() - 1);
     }
-    return count;
+    return frozen;
+  }
+
+  /**
+   * GitHub-style heatmap data: `weeks` columns (oldest first) of 7
+   * Monday-first day cells, ending with the week containing endKey.
+   * Each cell is { key, state } with state 'done' | 'frozen' | 'missed' |
+   * 'off' (unscheduled) | 'future'.
+   */
+  function heatmapData(days, hid, schedule, endKey, weeks) {
+    var endMonday = weekStartKey(isoWeekKey(endKey));
+    var startMonday = addDays(endMonday, -(weeks - 1) * 7);
+    // The final column runs to Sunday of endKey's week, which can be after endKey;
+    // clamp to today since future days can't be frozen.
+    var lastDay = addDays(startMonday, weeks * 7 - 1);
+    if (lastDay > today) lastDay = today;
+    var frozen = frozenDaysInRange(days, hid, schedule, startMonday, lastDay);
+    var today = todayKey();
+    var cols = [];
+    for (var w = 0; w < weeks; w++) {
+      var col = [];
+      for (var i = 0; i < 7; i++) {
+        var k = addDays(startMonday, w * 7 + i);
+        var state;
+        if (k > today) state = 'future';
+        else if (isDoneIn(days, k, hid)) state = 'done';
+        else if (frozen[k]) state = 'frozen';
+        else if (isScheduledDay(schedule, k)) state = 'missed';
+        else state = 'off';
+        col.push({ key: k, state: state });
+      }
+      cols.push(col);
+    }
+    return cols;
   }
 
   /**
    * Longest run of consecutive scheduled periods. Compares calendar days, not
    * millisecond deltas, so DST transitions can't split a streak; rest days
-   * are skipped so a Mon–Fri habit's weekend never breaks the run.
+   * are skipped so a Mon–Fri habit's weekend never breaks the run. One
+   * missed scheduled day per ISO week is forgiven (grace day).
    */
   function bestStreak(days, hid, schedule) {
     var s = normSchedule({ schedule: schedule });
@@ -212,17 +301,24 @@
       }
       return best;
     }
-    var best = 0, cur = 0, prev = null;
-    var keys = Object.keys(days || {}).sort();
-    for (var i = 0; i < keys.length; i++) {
-      var k = keys[i];
-      if (!isScheduledDay(schedule, k)) continue;
-      if (!isDoneIn(days, k, hid)) { cur = 0; prev = null; continue; }
-      cur = (prev !== null && prevScheduledDay(schedule, k) === prev) ? cur + 1 : 1;
-      prev = k;
-      if (cur > best) best = cur;
+    var dkeys = Object.keys(days || {}).sort();
+    if (!dkeys.length) return 0;
+    var frozenWeeks = {};
+    var bbest = 0, ccur = 0, gguard = 0;
+    var d = parseKey(dkeys[0]);
+    var dend = parseKey(dkeys[dkeys.length - 1]);
+    while (dayKey(d) <= dayKey(dend) && gguard++ < 4000) {
+      var k = dayKey(d);
+      if (!isScheduledDay(schedule, k)) { d.setDate(d.getDate() + 1); continue; }
+      if (isDoneIn(days, k, hid)) { ccur++; if (ccur > bbest) bbest = ccur; }
+      else {
+        var ww = isoWeekKey(k);
+        if (!frozenWeeks[ww]) frozenWeeks[ww] = true; // grace day: streak survives
+        else ccur = 0;
+      }
+      d.setDate(d.getDate() + 1);
     }
-    return best;
+    return bbest;
   }
 
   function totalDone(days, hid) {
@@ -585,6 +681,9 @@
     isDoneIn: isDoneIn,
     currentStreak: currentStreak,
     bestStreak: bestStreak,
+    graceUsedThisWeek: graceUsedThisWeek,
+    frozenDaysInRange: frozenDaysInRange,
+    heatmapData: heatmapData,
     totalDone: totalDone,
     validateImport: validateImport,
     migrateState: migrateState,

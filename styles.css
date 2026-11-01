@@ -164,6 +164,9 @@ main { padding: 6px 14px 20px; flex: 1; }
   padding: 11px 12px; font: inherit; font-size: 15px; background: #fbfcfe;
 }
 .text-in:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+/* iOS Safari gives time inputs an intrinsic minimum width that can push
+   them past their container; pin the element box. */
+.text-in[type="time"] { display: block; min-width: 0; max-width: 100%; }
 .emoji-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .emoji-pick {
   font-size: 24px; width: 48px; height: 48px; border-radius: 12px;
@@ -368,3 +371,15 @@ select.text-in { appearance: auto; }
 .err-log { display: grid; gap: 6px; margin-bottom: 10px; }
 .err { font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; word-break: break-word; }
 .err-t { color: var(--muted); font-weight: 600; }
+
+/* ---------- phase B: heatmap ---------- */
+.hm-label { font-size: 12.5px; font-weight: 700; color: var(--muted); margin: 14px 0 6px; }
+.heatmap { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 2px; }
+.hm-col { display: flex; flex-direction: column; gap: 3px; }
+.hm-cell { width: 12px; height: 12px; border-radius: 3px; background: var(--line); opacity: .5; }
+.hm-cell.hm-done { background: var(--good); opacity: 1; }
+.hm-cell.hm-frozen { background: #3b82f6; opacity: 1; }
+.hm-cell.hm-missed { background: transparent; border: 1px solid var(--line); opacity: .9; }
+.hm-cell.hm-off { opacity: .18; }
+.hm-cell.hm-future { opacity: .1; }
+[data-theme="dark"] .hm-cell.hm-frozen { background: #7cb3ff; }
