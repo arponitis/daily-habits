@@ -1,6 +1,7 @@
 'use strict';
 /* Daily Habits — a private, offline-first habit tracker.
-   All data lives in this device's localStorage under STORE_KEY. */
+   Persistence lives in db.js (IndexedDB primary, localStorage fallback);
+   the in-memory `state` below is the single source of truth for the UI. */
 
 var STORE_KEY = 'daily-habits/v1';
 
@@ -16,17 +17,6 @@ var EMOJI_CHOICES = ['📖','🧘','🚫','🏃','💧','📝','🎸','🧠','�
 
 function uid() { return 'h_' + Math.random().toString(36).slice(2, 10); }
 
-function loadRaw() {
-  try {
-    var raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      var s = JSON.parse(raw);
-      if (s && typeof s === 'object') return s;
-    }
-  } catch (e) { /* corrupted or unavailable storage -> start fresh */ }
-  return null;
-}
-
 function seedState() {
   return {
     v: DH.CURRENT_SCHEMA_VERSION,
@@ -39,11 +29,9 @@ function seedState() {
 }
 
 function saveState() {
+  if (!state) return; // boot() hasn't loaded yet
   state.v = DH.CURRENT_SCHEMA_VERSION;
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-  catch (e) {
-    showToast('⚠️ Could not save — storage may be full. Export your data!', 'Export', exportData);
-  }
+  DHStore.save(JSON.stringify(state)); // debounced; errors surface via onSaveError
 }
 
 /* Stash a copy under a backup key instead of ever silently wiping user data. */
@@ -53,15 +41,7 @@ function backupRaw(raw) {
   } catch (e) {}
 }
 
-var state;
-try {
-  state = DH.migrateState(loadRaw() || seedState());
-} catch (e) {
-  // Payload claims a schema newer than this build understands: back it up
-  // and start fresh rather than destroying it.
-  backupRaw(localStorage.getItem(STORE_KEY));
-  state = seedState();
-}
+var state = null; // assigned in boot() once the persisted payload loads
 
 /* ---------------- shared pure logic (lib.js) ----------------
  * Date/streak logic lives in lib.js (globalThis.DH) so it is unit tested in
@@ -441,13 +421,16 @@ function handleImport(input) {
 
 function wipeData() {
   if (!confirm('Delete ALL habits and history on this device? This cannot be undone.')) return;
-  backupRaw(localStorage.getItem(STORE_KEY)); // recoverable copy, just in case
-  localStorage.removeItem(STORE_KEY);
-  state = seedState();
-  viewDate = todayKey();
-  viewMonth = viewDate.slice(0, 7);
-  saveState();
-  render();
+  DHStore.readRaw().then(function (raw) {
+    backupRaw(raw); // recoverable copy, just in case
+    return DHStore.clear();
+  }).then(function () {
+    state = seedState();
+    viewDate = todayKey();
+    viewMonth = viewDate.slice(0, 7);
+    saveState();
+    render();
+  });
 }
 
 /* ---------------- reminders ---------------- */
@@ -662,7 +645,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.6.0';
+var APP_VERSION = '1.10.0';
 
 function logError(msg, src) {
   try {
@@ -813,6 +796,7 @@ function sheetHtml(h, key) {
     graceLine(h) +
     '<div class="sched-line">This week <b>' + wp.done + '/' + wp.target + '</b></div>' +
     weekStrip(key, h.id) +
+    heatmapHtml(h) +
     '<div class="field"><label>Note for ' + esc(fmtLong(key)) + '</label>' +
       '<textarea class="note" placeholder="Add a note for this day…" ' +
       'onchange="setNote(\'' + key + '\',\'' + h.id + '\',this.value)">' + esc(note) + '</textarea></div>' +
@@ -820,6 +804,22 @@ function sheetHtml(h, key) {
       (done ? 'Uncheck for ' + esc(fmtShort(key)) : 'Mark done for ' + esc(fmtShort(key))) + '</button>' +
     '<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="shareHabit(\'' + h.id + '\')">Share streak</button>' +
   '</div>';
+}
+
+/** GitHub-style 16-week check-in heatmap for the habit sheet. */
+function heatmapHtml(h) {
+  var cols = DH.heatmapData(state.days, h.id, h.schedule, todayKey(), 16);
+  var html = '<div class="hm-label">Last 16 weeks</div>' +
+    '<div class="heatmap" role="img" aria-label="Check-in history heatmap">';
+  for (var w = 0; w < cols.length; w++) {
+    html += '<div class="hm-col">';
+    for (var i = 0; i < 7; i++) {
+      var c = cols[w][i];
+      html += '<div class="hm-cell hm-' + c.state + '" title="' + c.key + '"></div>';
+    }
+    html += '</div>';
+  }
+  return html + '</div>';
 }
 
 function graceLine(h) {
@@ -1143,7 +1143,6 @@ function render() {
     if (sh) document.getElementById('view').innerHTML += sheetHtml(sh, viewDate);
     else sheetHabit = null;
   }
-  window.scrollTo(0, 0);
 }
 
 /* ---------------- UI actions (called from inline handlers) ---------------- */
@@ -1242,7 +1241,7 @@ function pickDay(k) {
   render();
 }
 
-function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); }
+function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); window.scrollTo(0, 0); }
 
 /* ---------------- boot ---------------- */
 
@@ -1286,19 +1285,64 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     }).catch(function () { /* offline not available */ });
   });
 }
-setInterval(checkReminder, 30000);
-checkReminder();
-handleDeepLink();
+/* ---------------- boot ----------------
+ * Storage is async now (IndexedDB), so state loads in boot() before the
+ * first render. Everything above only defines functions. */
 
-document.querySelectorAll('.tab').forEach(function (btn) {
-  btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
-});
-document.getElementById('importFile').addEventListener('change', function () { handleImport(this); });
-document.getElementById('importEncFile').addEventListener('change', function () { handleEncryptedImport(this); });
-document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && sheetHabit) { closeSheet(); return; }
-  if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'newHabitName') addHabit();
-});
+/* If db.js failed to load (e.g. a stale cache served index.html without it),
+ * fall back to plain localStorage so the app still boots and saves. */
+if (typeof DHStore === 'undefined') {
+  var DHStore = {
+    loadPersisted: function () {
+      try {
+        var raw = localStorage.getItem('daily-habits/v1');
+        if (raw) { var s = JSON.parse(raw); if (s && typeof s === 'object') return Promise.resolve({ data: s, raw: raw }); }
+      } catch (e) {}
+      return Promise.resolve(null);
+    },
+    readRaw: function () {
+      try { return Promise.resolve(localStorage.getItem('daily-habits/v1')); }
+      catch (e) { return Promise.resolve(null); }
+    },
+    save: function (p) { try { localStorage.setItem('daily-habits/v1', p); } catch (e) {} },
+    flush: function () { return Promise.resolve(); },
+    clear: function () { try { localStorage.removeItem('daily-habits/v1'); } catch (e) {} return Promise.resolve(); },
+    onSaveError: function () {}
+  };
+}
 
-saveState(); // persist seed on first run
-render();
+async function boot() {
+  var persisted = null;
+  try { persisted = await DHStore.loadPersisted(); } catch (e) { persisted = null; }
+  try {
+    state = DH.migrateState(persisted ? persisted.data : seedState());
+  } catch (e) {
+    // Payload claims a schema newer than this build understands: back it up
+    // and start fresh rather than destroying it.
+    backupRaw(persisted ? persisted.raw : null);
+    state = seedState();
+  }
+  DHStore.onSaveError(function () {
+    showToast('⚠️ Could not save — storage may be full. Export your data!', 'Export', exportData);
+  });
+  window.addEventListener('pagehide', function () { DHStore.flush(); });
+
+  setInterval(checkReminder, 30000);
+  checkReminder();
+  handleDeepLink();
+
+  document.querySelectorAll('.tab').forEach(function (btn) {
+    btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+  });
+  document.getElementById('importFile').addEventListener('change', function () { handleImport(this); });
+  document.getElementById('importEncFile').addEventListener('change', function () { handleEncryptedImport(this); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && sheetHabit) { closeSheet(); return; }
+    if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'newHabitName') addHabit();
+  });
+
+  saveState(); // persist seed on first run
+  render();
+
+}
+boot();
