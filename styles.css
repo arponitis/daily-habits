@@ -383,3 +383,11 @@ select.text-in { appearance: auto; }
 .hm-cell.hm-off { opacity: .18; }
 .hm-cell.hm-future { opacity: .1; }
 [data-theme="dark"] .hm-cell.hm-frozen { background: #7cb3ff; }
+
+/* Habit templates (Phase C) */
+.tpl-head{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:10px 2px;cursor:pointer;text-align:left;color:inherit;font:inherit}
+.tpl-head .m-name{flex:1}
+.tpl-caret{opacity:.45}
+.tpl-body{padding:2px 2px 10px}
+.tpl-row{display:flex;align-items:center;gap:9px;padding:9px 2px;cursor:pointer}
+.tpl-row input{width:18px;height:18px;accent-color:var(--accent);flex:none}
