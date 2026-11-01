@@ -1151,7 +1151,6 @@ function render() {
     if (sh) document.getElementById('view').innerHTML += sheetHtml(sh, viewDate);
     else sheetHabit = null;
   }
-  window.scrollTo(0, 0);
 }
 
 /* ---------------- UI actions (called from inline handlers) ---------------- */
@@ -1250,7 +1249,7 @@ function pickDay(k) {
   render();
 }
 
-function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); }
+function switchTab(tab) { activeTab = tab; sheetHabit = null; render(); window.scrollTo(0, 0); }
 
 /* ---------------- boot ---------------- */
 
