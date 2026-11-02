@@ -1,0 +1,9 @@
+name = "daily-habits-sync"
+main = "worker.js"
+compatibility_date = "2026-10-31"
+
+# Created by `wrangler kv namespace create SYNC` during setup -
+# paste the returned id here.
+[[kv_namespaces]]
+binding = "SYNC"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
