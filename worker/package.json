@@ -1,0 +1,1 @@
+{"dependencies":{"web-push":"^3.6.7"},"devDependencies":{"wrangler":"^4.0.0"},"name":"daily-habits-push","private":true,"scripts":{"deploy":"wrangler deploy","test":"node --test push.test.js"},"type":"module"}
