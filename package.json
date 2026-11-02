@@ -1,1 +1,12 @@
-{"description":"A simple, private daily habit tracker.","name":"daily-habits","private":true,"scripts":{"test":"TZ=America/New_York node --test test/dates.test.js test/streak.test.js test/state.test.js test/schedule.test.js test/insights.test.js test/manifest.test.js test/crypto.test.js test/merge.test.js test/heatmap.test.js test/templates.test.js test/trends.test.js worker/push.test.js"},"version":"1.6.0","devDependencies":{"fake-indexeddb":"^6.2.7"}}
+{
+  "description": "A simple, private daily habit tracker.",
+  "name": "daily-habits",
+  "private": true,
+  "scripts": {
+    "test": "TZ=America/New_York node --test test/lib/dates.test.js test/lib/streaks.test.js test/lib/schema.test.js test/lib/schedule.test.js test/lib/insights.test.js test/manifest.test.js test/lib/crypto.test.js test/lib/merge.test.js test/lib/heatmap.test.js test/lib/templates.test.js test/lib/trends.test.js test/store/db.test.js test/sync/client.test.js workers/push/push.test.js workers/sync/sync-protocol.test.js test/inventory.test.js"
+  },
+  "version": "1.6.0",
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.7"
+  }
+}
