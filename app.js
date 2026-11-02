@@ -394,7 +394,8 @@ function applyTemplate(id) {
   saveState();
   expandedTemplate = null;
   showToast('Added ' + habits.length + ' habit' + (habits.length === 1 ? '' : 's') + ' 🎉');
-  render();
+  if (onboardingStep === 'templates') completeOnboarding();
+  else render();
 }
 
 /* ---------------- share ---------------- */
@@ -466,7 +467,9 @@ function wipeData() {
     backupRaw(raw); // recoverable copy, just in case
     return DHStore.clear();
   }).then(function () {
-    state = seedState();
+    try { localStorage.removeItem(ONBOARD_KEY); localStorage.removeItem(TIP_KEY); } catch (e) {}
+    state = emptyState();
+    onboardingStep = 'choice';
     viewDate = todayKey();
     viewMonth = viewDate.slice(0, 7);
     saveState();
@@ -638,6 +641,71 @@ function dismissWelcome() {
   render();
 }
 
+/* ---------------- onboarding refresh (#60) ---------------- */
+var onboardingStep = null; // null | 'choice' | 'templates' — first-run flow
+var TIP_KEY = 'daily-habits/tip-seen';
+
+function emptyState() {
+  return { v: DH.CURRENT_SCHEMA_VERSION, habits: [], days: {} };
+}
+
+function isTipSeen() {
+  try { return !!localStorage.getItem(TIP_KEY); } catch (e) { return true; }
+}
+
+function dismissTip() {
+  try { localStorage.setItem(TIP_KEY, '1'); } catch (e) {}
+  render();
+}
+
+function hasAnyCheckin() {
+  var days = state.days || {};
+  for (var k in days) {
+    var d = days[k] || {};
+    for (var hid in d) { if (d[hid] && d[hid].done) return true; }
+  }
+  return false;
+}
+
+function onboardingHtml() {
+  if (onboardingStep === 'templates') {
+    return '<div class="card"><button type="button" class="btn ghost" onclick="onboardingBack()">&larr; Back</button></div>' +
+      templatesCardHtml();
+  }
+  return '<div class="card welcome"><div class="w-ico">🌱</div>' +
+    '<h2>Welcome to Daily Habits</h2>' +
+    '<p class="hint">How do you want to start?</p>' +
+    '<div class="ob-choices">' +
+    '<button type="button" class="ob-choice" onclick="chooseOnboarding(\'template\')"><span class="ob-ico">📦</span>' +
+    '<span class="ob-txt"><b>Start from a template</b><small>Starter packs like Morning Reset or Deep Work</small></span></button>' +
+    '<button type="button" class="ob-choice" onclick="chooseOnboarding(\'blank\')"><span class="ob-ico">📝</span>' +
+    '<span class="ob-txt"><b>Start blank</b><small>Add your own habits from scratch</small></span></button>' +
+    '<button type="button" class="ob-choice" onclick="chooseOnboarding(\'trio\')"><span class="ob-ico">🌱</span>' +
+    '<span class="ob-txt"><b>Classic trio</b><small>Reading, Meditating, No sugar</small></span></button>' +
+    '</div></div>';
+}
+
+function onboardingBack() { onboardingStep = 'choice'; render(); }
+
+function chooseOnboarding(kind) {
+  if (kind === 'template') { onboardingStep = 'templates'; render(); return; }
+  state = (kind === 'trio') ? seedState() : emptyState();
+  completeOnboarding();
+}
+
+function completeOnboarding() {
+  try { localStorage.setItem(ONBOARD_KEY, '1'); } catch (e) {}
+  onboardingStep = null;
+  expandedTemplate = null;
+  saveState();
+  render();
+}
+
+function tipCardHtml() {
+  return '<div class="card tip"><button type="button" class="tip-x" onclick="dismissTip()" aria-label="Dismiss tip">×</button>' +
+    '<p>👆 <b>Tap a habit to check in.</b> One tap a day keeps the streak alive.</p></div>';
+}
+
 function welcomeGo() {
   dismissWelcome();
   switchTab('more');
@@ -686,7 +754,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.10.0';
+var APP_VERSION = '1.11.0';
 
 function logError(msg, src) {
   try {
@@ -886,7 +954,9 @@ function renderCheckin() {
     '<button type="button" class="navbtn" onclick="moveDay(1)" ' + (isToday ? 'disabled' : '') + ' aria-label="Next day">›</button>' +
   '</div>';
 
-  if (!isOnboarded()) html += welcomeHtml();
+  if (onboardingStep) html += onboardingHtml();
+  else if (!isOnboarded()) html += welcomeHtml();
+  else if (!isTipSeen() && !hasAnyCheckin() && activeHabits().length) html += tipCardHtml();
 
   // category filter chips
   var cats = [];
@@ -1234,6 +1304,7 @@ function toggleDone(hid) {
   var key = viewDate;
   var prev = isDone(key, hid);
   setDone(key, hid, !prev);
+  if (!prev && !isTipSeen()) { try { localStorage.setItem(TIP_KEY, '1'); } catch (e) {} }
   undoStack.push({ key: key, hid: hid, prev: prev });
   if (undoStack.length > 20) undoStack.shift();
   render();
@@ -1357,14 +1428,17 @@ if (typeof DHStore === 'undefined') {
 async function boot() {
   var persisted = null;
   try { persisted = await DHStore.loadPersisted(); } catch (e) { persisted = null; }
+  var freshInstall = !persisted || !persisted.data;
+  var startEmpty = freshInstall && !isOnboarded();
   try {
-    state = DH.migrateState(persisted ? persisted.data : seedState());
+    state = DH.migrateState(persisted && persisted.data ? persisted.data : (startEmpty ? emptyState() : seedState()));
   } catch (e) {
     // Payload claims a schema newer than this build understands: back it up
     // and start fresh rather than destroying it.
     backupRaw(persisted ? persisted.raw : null);
-    state = seedState();
+    state = startEmpty ? emptyState() : seedState();
   }
+  if (startEmpty) onboardingStep = 'choice';
   DHStore.onSaveError(function () {
     showToast('⚠️ Could not save — storage may be full. Export your data!', 'Export', exportData);
   });

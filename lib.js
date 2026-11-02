@@ -280,6 +280,58 @@
     return cols;
   }
 
+  /* ---------------- trends (Phase C) ----------------
+   * Per-week completion rates and best-weekday analysis, built on
+   * heatmapData. Grace-frozen days count as done.
+   */
+
+  /**
+   * Completion rate per week over `weeks` weeks ending at endKey's week.
+   * Returns [{weekStart, done, scheduled, rate}] oldest first; rate is null
+   * when nothing was scheduled that week.
+   */
+  function weeklyRates(days, hid, schedule, endKey, weeks) {
+    return heatmapData(days, hid, schedule, endKey, weeks).map(function (col) {
+      var done = 0, scheduled = 0;
+      col.forEach(function (c) {
+        if (c.state === 'done' || c.state === 'frozen') { done++; scheduled++; }
+        else if (c.state === 'missed') scheduled++;
+      });
+      return { weekStart: col[0].key, done: done, scheduled: scheduled, rate: scheduled ? done / scheduled : null };
+    });
+  }
+
+  /**
+   * Best weekday for a habit: {weekday (0=Sunday), rate, n}, based on REAL
+   * check-ins only (grace-frozen days are ignored — the freeze always lands
+   * on the latest missed day of the week, which would bias toward weekends).
+   * Requires at least 4 scheduled occurrences and at least one real done;
+   * null otherwise.
+   */
+  function bestWeekday(days, hid, schedule, endKey, weeks) {
+    var endMonday = weekStartKey(isoWeekKey(endKey));
+    var startMonday = addDays(endMonday, -(weeks - 1) * 7);
+    var today = todayKey();
+    var agg = {};
+    for (var i = 0; i < weeks * 7; i++) {
+      var k = addDays(startMonday, i);
+      if (k > today) break;
+      if (!isScheduledDay(schedule, k)) continue;
+      var dow = parseKey(k).getDay();
+      var a = agg[dow] || (agg[dow] = { done: 0, scheduled: 0 });
+      a.scheduled++;
+      if (isDoneIn(days, k, hid)) a.done++;
+    }
+    var best = null;
+    Object.keys(agg).forEach(function (dow) {
+      var a = agg[dow];
+      if (a.scheduled < 4 || a.done === 0) return;
+      var rate = a.done / a.scheduled;
+      if (!best || rate > best.rate) best = { weekday: +dow, rate: rate, n: a.scheduled };
+    });
+    return best;
+  }
+
   /**
    * Longest run of consecutive scheduled periods. Compares calendar days, not
    * millisecond deltas, so DST transitions can't split a streak; rest days
@@ -787,6 +839,8 @@
     encryptBackup: encryptBackup,
     decryptBackup: decryptBackup,
     mergeStates: mergeStates,
+    weeklyRates: weeklyRates,
+    bestWeekday: bestWeekday,
     listTemplates: listTemplates,
     getTemplate: getTemplate,
     instantiateTemplate: instantiateTemplate
