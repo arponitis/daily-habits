@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('weeklyRates returns one entry per week, oldest first', () => {
   const days = { '2026-10-26': { h1: { done: true } } };

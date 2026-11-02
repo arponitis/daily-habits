@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('listTemplates returns 4 packs with summaries', () => {
   const ts = DH.listTemplates();

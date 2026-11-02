@@ -1,15 +1,35 @@
 /* Daily Habits service worker — offline app-shell cache.
    First visit caches the shell; afterwards the app loads with no network. */
 
-var CACHE = 'daily-habits-v10';
+var CACHE = 'daily-habits-v11';
 var ASSETS = [
   './',
   './index.html',
   './styles.css',
-  './app.js',
-  './lib.js',
-  './db.js',
-  './sync.js',
+  './js/lib/dates.js',
+  './js/lib/schedule.js',
+  './js/lib/streaks.js',
+  './js/lib/heatmap.js',
+  './js/lib/trends.js',
+  './js/lib/insights.js',
+  './js/lib/crypto.js',
+  './js/lib/merge.js',
+  './js/lib/templates.js',
+  './js/lib/schema.js',
+  './js/store/db.js',
+  './js/sync/client.js',
+  './js/app/state.js',
+  './js/app/checkin.js',
+  './js/app/sheet.js',
+  './js/app/stats.js',
+  './js/app/calendar.js',
+  './js/app/more.js',
+  './js/app/editor.js',
+  './js/app/reminders.js',
+  './js/app/sync-ui.js',
+  './js/app/templates-ui.js',
+  './js/app/onboarding.js',
+  './js/app/shell.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'

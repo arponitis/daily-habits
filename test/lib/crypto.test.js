@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { webcrypto } = require('node:crypto');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('encrypted backup round-trips', async () => {
   const payload = await DH.encryptBackup(webcrypto, '{"v":2,"habits":[]}', 's3cret-password');

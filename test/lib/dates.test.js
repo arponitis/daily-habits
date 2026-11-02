@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('dayKey/parseKey round-trip', () => {
   for (const k of ['2026-01-01', '2026-02-28', '2026-12-31', '2024-02-29']) {

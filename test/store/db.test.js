@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 require('fake-indexeddb/auto'); // sets globalThis.indexedDB once
 const FDBFactory = require('fake-indexeddb/lib/FDBFactory');
-const store = require('../db.js');
+const store = require('../../js/store/db.js');
 
 const LEGACY = 'daily-habits/v1';
 const PAYLOAD = JSON.stringify({ v: 2, habits: [], days: {} });

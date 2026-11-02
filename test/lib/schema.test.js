@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('migrateState upgrades v0 state all the way to v2', () => {
   const v0 = {

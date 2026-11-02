@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 function daysFor(keys, hid = 'h1') {
   const days = {};

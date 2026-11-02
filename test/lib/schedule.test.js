@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 const WEEKDAYS = { type: 'weekdays', days: [1, 2, 3, 4, 5] }; // Mon–Fri
 const THREE_X = { type: 'timesPerWeek', times: 3 };

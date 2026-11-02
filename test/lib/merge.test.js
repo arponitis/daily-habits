@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const DH = require('../lib.js');
+const DH = require('../../js/lib/index.js');
 
 test('merge unions habits by id (current device wins)', () => {
   const base = { v: 2, habits: [{ id: 'a', name: 'Read' }], days: {} };

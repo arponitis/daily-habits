@@ -1,8 +1,8 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { webcrypto } = require('node:crypto');
-const DH = require('../lib.js');
-const DHSync = require('../sync.js');
+const DH = require('../../js/lib/index.js');
+const DHSync = require('../../js/sync/client.js');
 
 const PW = 'correct-horse-battery-staple';
 const CODE = 'ABCDEFGH23456789';
