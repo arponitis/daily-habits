@@ -601,8 +601,8 @@ function checkReminder() {
    local-only via the in-app scheduler above. All network failures fall
    back to local reminders silently. */
 
-var PUSH_ENDPOINT = ''; // e.g. 'https://daily-habits-push.<you>.workers.dev'
-var VAPID_PUBLIC_KEY = ''; // public VAPID key — safe to commit
+var PUSH_ENDPOINT = 'https://daily-habits-push.daily-habits-tracker.workers.dev';
+var VAPID_PUBLIC_KEY = 'BBPywod1ljYbeegwtyiE9Zkvygt1LtGREC44JoK5ECMzk8iUNvDp8A4pWh14nwZfAGIy8_cc5rx9Px_9kNa2tg0'; // public VAPID key — safe to commit
 
 function urlBase64ToUint8Array(b64) {
   var padding = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -806,7 +806,7 @@ function updateOnlinePill() {
 /* ---------------- diagnostics ---------------- */
 
 var ERR_KEY = 'daily-habits/v1.errors';
-var APP_VERSION = '1.11.0';
+var APP_VERSION = '1.12.0';
 
 function logError(msg, src) {
   try {
